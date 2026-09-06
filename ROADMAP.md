@@ -2,6 +2,14 @@
 
 路线图是待验证的工作计划，不是已交付功能或固定发布日期承诺。范围调整通过 Issue 讨论；不以“已写文档”代替代码和验收完成。
 
+2026-09-07：[项目解构](docs/project-decomposition.md)已形成[需求池 R2](BACKLOG.md)。首轮范围确认是 v0.1.1 的 UX-01 至 UX-05；后续 UI、来源适配、任务状态和操作系统兼容按独立需求验收，不把规划等同于实现。
+
+## v0.1.1：首次导入与导航修复
+
+对应 [里程碑 3](https://github.com/weihaoting123-ctrl/human-online-relationships/milestone/3)、[#12](https://github.com/weihaoting123-ctrl/human-online-relationships/issues/12) 和 [#13](https://github.com/weihaoting123-ctrl/human-online-relationships/issues/13)。本轮实现文件来源一致、导入结果可达、空状态区分、导航焦点和稳定错误提示，不重构持久化和采集路径。
+
+采用失败回归 → 最小修复 → 独立规范/质量审查 → 完整合成测试 → 公开文件扫描 → 跨平台 CI → 版本发布的门槛。具体证据与未验证范围见 [审查记录](docs/reviews/v0.1.1-review.md) 和 [发布核验](docs/release-verification.md)；正式完成以对应 Release、Issue 和里程碑状态为准。
+
 ## v0.1.0：首个公开基线
 
 当前已实现能力见 [CHANGELOG](CHANGELOG.md)。本基线聚焦单会话、本机优先、只读原件、独立管理字段，以及有明确证据和授权边界的关系时间线。

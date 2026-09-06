@@ -233,7 +233,18 @@ class AppleUIBrowserTests(unittest.TestCase):
         self.page.set_viewport_size({'width': 390, 'height': 844})
         for view in ('catalog', 'settings', 'analysis-workspace', 'maintenance', 'trash'):
             self.open_view(view)
-            controls = self.page.locator('button:visible, select:visible, .nav-item:visible, input:visible:not([type="checkbox"]):not([type="radio"]):not([type="file"]), textarea:visible').evaluate_all('nodes => nodes.map(n => ({id:n.id || n.textContent.trim(),width:n.getBoundingClientRect().width,height:n.getBoundingClientRect().height}))')
+            if view == 'settings':
+                self.expect(self.page.locator('#tag-list .tag-edit')).to_have_count(1)
+            # Query visibility and measure in one synchronous browser call.
+            # A locator's resolved elements can be detached by settings refresh
+            # before evaluate_all, yielding a false zero-sized old button.
+            controls = self.page.evaluate('''() => Array.from(document.querySelectorAll(
+              'button, select, .nav-item, input:not([type="checkbox"]):not([type="radio"]):not([type="file"]), textarea'
+            )).filter(node => node.checkVisibility({checkVisibilityCSS: true})).map(node => {
+              const bounds = node.getBoundingClientRect();
+              return {id: node.id || node.textContent.trim(), width: bounds.width, height: bounds.height};
+            })''')
+            self.assertTrue(controls, view)
             for control in controls:
                 self.assertGreaterEqual(control['height'], 44, (view, control))
                 self.assertGreaterEqual(control['width'], 44, (view, control))

@@ -416,6 +416,57 @@ class AnalysisBrowserTests(unittest.TestCase):
         self.expect(self.page.locator('#ai-result')).to_be_visible(timeout=15_000)
         self.assertEqual(self.run_calls(), [])
 
+    def assert_accepted_run_response_loss_is_not_retried(self, failure):
+        self.blocked_calls = 1
+        self.open_ai()
+        self.select_scope()
+        self.preview()
+        self.page.locator('#ai-consent').check()
+        self.page.locator('#ai-retry-uncertain').check()
+        # The local endpoint accepts the request before its response is lost.
+        # Only the transport is replaced; consent, recovery and rendering stay real.
+        self.page.evaluate('''failure => {
+          const originalFetch = window.fetch;
+          window.fetch = async (url, options) => {
+            const response = await originalFetch(url, options);
+            if (String(url) !== '/api/ai/run') return response;
+            if (failure === 'network') throw new TypeError('synthetic transport failure');
+            if (failure === 'timeout') throw new DOMException('synthetic timeout', 'TimeoutError');
+            return new Response(failure === 'empty' ? '' : '<html>synthetic transport failure</html>',
+              {status: 200, headers: {'Content-Type': 'application/json'}});
+          };
+        }''', failure)
+        before = len(self.api_calls)
+        self.page.locator('#ai-run-button').click()
+        self.expect(self.page.locator('#ai-history-list')).to_contain_text('合成青禾')
+        self.assertTrue(self.has_report, 'Synthetic endpoint accepted the run')
+        self.assertEqual(len(self.run_calls()), 1)
+        after = self.api_calls[before:]
+        self.assertEqual([(method, path) for method, path, _ in after if method == 'POST'],
+                         [('POST', '/api/ai/run')])
+        for path in ('/api/ai/jobs', '/api/ai/history'):
+            self.assertIn(('GET', path), [(method, endpoint) for method, endpoint, _ in after])
+        self.expect(self.page.locator('#ai-preview')).to_be_hidden()
+        self.expect(self.page.locator('#ai-consent')).not_to_be_checked()
+        self.expect(self.page.locator('#ai-retry-uncertain')).not_to_be_checked()
+        self.expect(self.page.locator('#ai-run-button')).to_be_disabled()
+        # Refresh is reconciliation, not permission to repeat the mutation.
+        self.page.locator('#ai-refresh-history').click()
+        self.expect(self.page.locator('#ai-history-list')).to_contain_text('合成青禾')
+        self.assertEqual(len(self.run_calls()), 1)
+
+    def test_accepted_run_network_loss_clears_consent_and_only_reconciles(self):
+        self.assert_accepted_run_response_loss_is_not_retried('network')
+
+    def test_accepted_run_empty_response_clears_consent_and_only_reconciles(self):
+        self.assert_accepted_run_response_loss_is_not_retried('empty')
+
+    def test_accepted_run_non_json_response_clears_consent_and_only_reconciles(self):
+        self.assert_accepted_run_response_loss_is_not_retried('non-json')
+
+    def test_accepted_run_timeout_clears_consent_and_only_reconciles(self):
+        self.assert_accepted_run_response_loss_is_not_retried('timeout')
+
     def test_wait_budget_scales_with_planned_calls_and_never_reposts(self):
         self.job_state = 'running'
         self.plan_overrides = {'segments': 8, 'total_calls': 9, 'new_calls': 9, 'merge_calls': 1}
@@ -688,6 +739,8 @@ class AnalysisBrowserTests(unittest.TestCase):
         self.assertLessEqual(widths['document'], widths['viewport'], widths)
 
     def capture(self, name):
+        if os.environ.get('SHE_LOVE_ME_UI_SCREENSHOTS') != '1':
+            return
         # Reset test-driven scrolling/focus so fixed headers are photographed at
         # the top of a full-page artifact, not halfway through the document.
         self.page.evaluate('() => { document.activeElement?.blur(); window.scrollTo(0, 0); }')

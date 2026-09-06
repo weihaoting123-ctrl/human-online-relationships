@@ -370,6 +370,7 @@
     const retry = Number(plan.blocked_calls) > 0 && $('#ai-retry-uncertain').checked;
     setBusyState(true); clearTimeout(expiryTimer); preview = null;
     $('#ai-consent').checked = false; $('#ai-preview').hidden = true;
+    $('#ai-retry-uncertain').checked = false;
     feedback('已按本次授权提交文字范围和调用计划。正在等待模型；不会自动重试。');
     try {
       const body = { preview_id: id, consent: true };

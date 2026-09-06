@@ -1,5 +1,15 @@
 # 公开验证记录
 
+## v0.1.1 验收快照 · 2026-09-07
+
+本节记录提交前本机验收；远端 CI、最终提交与标签需要在发布时再次核对。最终结果写入同版 [Release](https://github.com/weihaoting123-ctrl/human-online-relationships/releases/tag/v0.1.1) 与 [迭代里程碑](https://github.com/weihaoting123-ctrl/human-online-relationships/milestone/3)，不能拿本机结果代替远端通过。
+
+首轮范围仅 UX-01 至 UX-05；源码审查、失败复现和修复记录见 [完整 review / debug](reviews/v0.1.1-review.md)。GitHub 的 Windows/Linux 合成工作流和双平台依赖审计继续作为发布门槛，macOS 和原生微信采集不在本轮验证之内。
+
+冻结源码本机验证：Python 3.12 / Playwright Edge，609 项合成测试中 606 通过、3 项平台或依赖条件跳过，276.920 秒，退出码 0；Node 目录检索与排序 8/8 通过；全部前端 JavaScript 语法与差异检查通过。独立规范、代码质量和公开文档审查均通过。仅针对性回归或已终止运行不计作最终完整通过。
+
+私人运行部署没有升级：本轮未读取真实聊天、媒体或密钥，不更改定时任务、模型连接、账号状态和备份。公开提交只含源码、文档、合成测试；不上传运行日志、截图、数据库或环境目录。旧 v0.1.0 标签保持原样。
+
 ## v0.1.0 源码基线 · 2026-09-06
 
 功能与测试提交：[8f8ec87](https://github.com/weihaoting123-ctrl/human-online-relationships/commit/8f8ec871b9959a719bb3160ec3542af259a9297a)。后续发布文档、管理状态记录不改变此功能代码。

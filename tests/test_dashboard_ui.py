@@ -268,14 +268,70 @@ class DashboardBrowserTests(unittest.TestCase):
 
     def test_desktop_and_mobile_no_horizontal_overflow(self):
         self.expect(self.page.locator("#environment-badge")).not_to_contain_text("undefined")
-        self.page.screenshot(path=str(ARTIFACTS / "dashboard-ui-desktop.png"), full_page=True)
+        if os.environ.get('SHE_LOVE_ME_UI_SCREENSHOTS') == '1':
+            self.page.screenshot(path=str(ARTIFACTS / "dashboard-ui-desktop.png"), full_page=True)
         self.page.set_viewport_size({"width": 375, "height": 812})
         self.page.wait_for_load_state("networkidle")
-        self.page.screenshot(path=str(ARTIFACTS / "dashboard-ui-mobile.png"), full_page=True)
+        if os.environ.get('SHE_LOVE_ME_UI_SCREENSHOTS') == '1':
+            self.page.screenshot(path=str(ARTIFACTS / "dashboard-ui-mobile.png"), full_page=True)
         widths = self.page.evaluate("({viewport: innerWidth, document: document.documentElement.scrollWidth})")
         self.assertLessEqual(widths["document"], widths["viewport"], widths)
         self.search_names("青禾", 3)
         self.expect(self.page.locator("#catalog-body .open-bundle").first).to_be_visible()
+
+
+@unittest.skipUnless(UI_ENABLED, 'Opt-in synthetic browser tests')
+class ImportEndpointBrowserTests(unittest.TestCase):
+    """Real import endpoint in a separate disposable fixture, without cloud APIs."""
+    @classmethod
+    def setUpClass(cls):
+        DashboardBrowserTests.setUpClass()
+
+    @classmethod
+    def tearDownClass(cls):
+        DashboardBrowserTests.tearDownClass()
+
+    def setUp(self):
+        self.fixture = DashboardBrowserTests()
+        self.fixture.setUp()
+        self.addCleanup(self.fixture.doCleanups)
+        self.page, self.expect = self.fixture.page, self.fixture.expect
+
+    def tearDown(self):
+        self.fixture.tearDown()
+
+    def test_import_view_and_exact_reimport_preserve_existing_archives(self):
+        contacts = self.fixture.contacts
+        originals = {path: path.read_bytes() for path in contacts.rglob('messages.json')}
+        payload = json.dumps({
+            'source': 'synthetic-ui-fixture', 'contact_display': '合成导入闭环',
+            'my_display': '合成测试用户', 'messages': [
+                {'sender': 'me', 'timestamp': 1788000000, 'type': 'text', 'content': '虚构测试甲'},
+                {'sender': 'them', 'timestamp': 1788000060, 'type': 'text', 'content': '虚构测试乙'},
+            ],
+        }, ensure_ascii=False).encode('utf-8')
+        imports = []
+        for _ in range(2):
+            self.page.locator('[data-view="maintenance"]').click()
+            self.page.locator('#import-form').evaluate('form => { form.closest("details").open = true; }')
+            self.page.locator('#chat-file').set_input_files({
+                'name': 'synthetic-import.json', 'mimeType': 'application/json', 'buffer': payload})
+            with self.page.expect_response(lambda response: response.url.endswith('/api/import')) as result:
+                self.page.locator('#import-button').click()
+            response = result.value
+            self.assertEqual(response.status, 200)
+            body = response.json()
+            imports.append(body['bundle']['id'])
+            self.expect(self.page.locator('#dashboard')).to_be_visible()
+            self.expect(self.page.locator('#case-title')).to_have_text('合成导入闭环')
+            self.expect(self.page.locator('#case-title')).to_be_focused()
+            self.page.locator('#close-detail').click()
+        self.assertEqual(imports[0], imports[1])
+        self.assertEqual(len(list(contacts.glob('*/messages.json'))), len(originals) + 1)
+        self.assertEqual(len(list((self.fixture.data / 'raw').iterdir())), 1)
+        for path, content in originals.items():
+            self.assertEqual(path.read_bytes(), content, 'Existing synthetic archive must not change')
+        self.assertFalse(any('/api/ai/' in url for _, url in self.fixture.requests))
 
 
 if __name__ == "__main__":

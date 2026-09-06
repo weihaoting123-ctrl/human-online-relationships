@@ -27,6 +27,7 @@
 </aside>
 <main id="main" class="main" tabindex="-1">
 <section id="notice" class="notice" hidden aria-live="polite" role="status"></section>
+<section id="import-result" class="import-result" hidden aria-label="最近一次导入结果"><p id="import-result-message" role="status" aria-live="polite"></p><button id="import-result-open" class="quiet-button" type="button" hidden>查看已导入会话</button></section>
 <section id="catalog" class="catalog" aria-labelledby="catalog-title">
 <header class="page-heading"><div><p class="eyebrow">本机微信 / 会话索引</p><h1 id="catalog-title">会话档案</h1><p class="page-description">按名称、内容和时间查找；从会话清单进入统计详情。</p></div><button id="refresh-button" class="quiet-button" type="button">刷新档案</button></header>
 <div class="archive-ledger" aria-label="档案概览"><div><span>已归档会话</span><strong id="total-conversations">—</strong></div><div><span>已归档消息</span><strong id="total-messages">—</strong></div><div><span>可查看图片记录</span><strong id="total-images">—</strong></div><p>原话不在控制台显示<br><span>内容搜索仅返回匹配数量</span></p></div>
@@ -52,9 +53,9 @@
 </div>
 <p class="under-note">主题来自本机规则初筛，含候选主题，非人工确认；名称搜索的日期筛选按会话时间范围相交，内容搜索按每条消息日期精确过滤。</p>
 </section>
-<section id="empty-state" class="empty-state" hidden><h2>从第一份档案开始</h2><p>当前没有本地会话。可在下方导入已有导出，或检查自动归档状态。</p><a href="#maintenance">查看归档与导入 ↓</a></section>
+<section id="empty-state" class="empty-state" hidden><h2>从第一份档案开始</h2><p>当前没有本地会话。导入已有聊天文件后，即可查看本机统计和关系时间线。</p><a id="first-import-link" href="#maintenance">导入第一份聊天文件 →</a></section>
 <section id="dashboard" class="detail-card" hidden aria-labelledby="case-title" aria-busy="false">
-<div class="case-header"><div><p class="eyebrow">会话统计 · 不含原话</p><h2 id="case-title">—</h2><p id="case-meta" class="case-meta">—</p></div><button id="close-detail" class="quiet-button" type="button">收起详情 ↑</button></div>
+<div class="case-header"><div><p class="eyebrow">会话统计 · 不含原话</p><h2 id="case-title" tabindex="-1">—</h2><p id="case-meta" class="case-meta">—</p></div><button id="close-detail" class="quiet-button" type="button">收起详情 ↑</button></div>
 <div class="case-actions"><button id="scope-ai-button" class="primary-button" type="button" data-module-entry="analysis">分析这个会话 →</button><button id="manage-conversation" class="quiet-button" type="button" aria-haspopup="dialog" aria-controls="conversation-dialog">管理会话资料</button><button id="analyze-button" class="quiet-button" type="button">重新计算统计</button><button id="report-button" class="quiet-button" type="button" hidden>生成完整报告</button><a id="report-link" class="primary-button as-link" href="#" target="_blank" rel="noreferrer" hidden>打开完整报告 ↗</a></div>
 <section id="relationship-timeline" class="relationship-timeline" hidden aria-label="所选会话关系时间线"></section>
 <div id="metrics" class="metric-grid"></div>
@@ -120,7 +121,7 @@
 <div class="resource-links"><a href="/exports/wechat-media/index.html" target="_blank" rel="noopener"><strong>图片月份相册 ↗</strong><span>按月份查看本机图片；部分格式为首帧预览</span></a><a href="/exports/classification/index.html" target="_blank" rel="noopener"><strong>静态分类清单 ↗</strong><span>查看第一轮分类报告；搜索筛选请使用上方会话索引</span></a></div>
 <div id="sync-attention" class="sync-attention" role="status" hidden></div>
 <details class="maintenance-panel" open><summary>同步详情 <span>只读微信，在本机副本去重</span></summary><div id="sync-details" class="sync-details"></div></details>
-<details class="maintenance-panel"><summary>导入已有聊天文件 <span>JSON / Markdown · 最大 50 MB</span></summary>
+<details id="import-panel" class="maintenance-panel"><summary>导入已有聊天文件 <span>JSON / Markdown · 最大 50 MB</span></summary>
 <form id="import-form" class="import-grid" novalidate><label id="drop-zone" class="drop-zone" for="chat-file"><input id="chat-file" type="file" accept=".json,.md,.txt,application/json,text/plain"><span class="drop-symbol" aria-hidden="true">＋</span><strong id="file-label">选择聊天导出文件</strong><small>或拖到这里 · 仅保存在本机</small></label><div class="field-stack"><label><span>数据来源</span><select id="source-kind"><option value="auto">自动识别 JSON</option><option value="normalized-json">统一 messages.json</option><option value="weflow-cli">WeFlow CLI JSON</option><option value="ciphertalk">CipherTalk JSON</option><option value="weflow-json">旧 WeFlow JSON</option><option value="markdown">带时间戳 Markdown</option></select></label><div class="field-row"><label><span>对方称呼</span><input id="contact-name" type="text" maxlength="80" placeholder="例如：小林"></label><label><span>我的称呼</span><input id="my-name" type="text" maxlength="80" value="我"></label></div><button id="import-button" class="primary-button" type="submit">导入并生成统计</button></div></form>
 </details>
 <details class="maintenance-panel"><summary>本机环境 <span id="environment-badge" class="status-badge">检查中</span></summary><div id="environment-details" class="environment-details"></div></details>

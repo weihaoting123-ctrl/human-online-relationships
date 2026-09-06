@@ -15,6 +15,8 @@ function renderBundles() {
   const page = Catalog.paginate(selected, state.filters.page, state.filters.pageSize);
   state.filters.page = page.page;
   const body = $('#catalog-body');
+  const focusedBundleId = state.currentView === 'catalog' && body.contains(document.activeElement)
+    ? document.activeElement.closest('.open-bundle')?.dataset.bundleId : null;
   body.replaceChildren();
   const kinds = { group: '群聊', direct: '私聊／服务会话', unknown: '类型待确认' };
   page.items.forEach((bundle) => {
@@ -23,6 +25,7 @@ function renderBundles() {
     const contact = el('td');
     const button = el('button', 'open-bundle');
     button.type = 'button';
+    button.dataset.bundleId = bundle.id;
     button.setAttribute('aria-pressed', String(active));
     button.setAttribute('aria-label', `查看 ${displayName(bundle)} 的统计`);
     const glyph = el('span', `contact-glyph ${bundle.conversation_kind || ''}`, bundle.conversation_kind === 'group' ? '群' : '聊');
@@ -61,10 +64,18 @@ function renderBundles() {
   const badDates = state.filters.from && state.filters.to && state.filters.from > state.filters.to;
   if (waiting) $('#result-summary').textContent = `${state.searchPhase === 'pending' ? '正在检索' : state.searchPhase === 'error' ? '检索未完成' : '等待搜索'} · 已归档 ${number(state.bundles.length)} 个会话`;
   if (badDates) $('#result-summary').textContent = '请检查日期范围';
-  $('#catalog-empty').hidden = page.total > 0 || Boolean(waiting) || Boolean(badDates);
+  $('#catalog-empty').hidden = !state.catalogLoaded || !state.bundles.length || page.total > 0 || Boolean(waiting) || Boolean(badDates);
+  $('#empty-state').hidden = state.currentView !== 'catalog' || !state.catalogLoaded || state.catalogPhase !== 'ready' || Boolean(state.bundles.length);
+  if (!state.catalogLoaded) $('#result-summary').textContent = state.catalogPhase === 'error'
+    ? '本地档案读取失败，请刷新后再试。' : '正在读取本地档案…';
+  else if (state.catalogPhase === 'error') $('#result-summary').textContent += ' · 刷新失败，显示上次成功读取的档案';
   $('#total-conversations').textContent = number(state.bundles.length);
   $('#nav-count').textContent = number(state.bundles.length);
   $('#total-messages').textContent = number(state.bundles.reduce((sum, item) => sum + Number(item.message_count || 0), 0));
+  // Preserve only the row focused immediately before this render. A removed
+  // row or a user now editing elsewhere must never receive delayed focus.
+  if (focusedBundleId) Array.from(body.querySelectorAll('.open-bundle'))
+    .find((node) => node.dataset.bundleId === focusedBundleId)?.focus({ preventScroll: true });
 }
 
 function renderEnvironment(payload) {
@@ -229,17 +240,22 @@ function initializeCatalog() {
     $(selector).addEventListener('click', () => {
       state.filters.page += delta;
       renderBundles();
-      $('.results-toolbar').scrollIntoView({ behavior: 'smooth', block: 'start' });
+      $('.results-toolbar').scrollIntoView({ behavior: scrollBehavior(), block: 'start' });
     });
   });
   $('#close-detail').addEventListener('click', () => {
+    const bundleId = state.activeBundle?.id;
+    state.interactionEpoch += 1;
     state.loadSequence += 1;
     window.RelationshipTimeline?.clear($('#relationship-timeline'));
     state.activeBundle = null;
     $('#dashboard').hidden = true;
     $('#dashboard').setAttribute('aria-busy', 'false');
     renderBundles();
-    $('#catalog').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    const rowButton = Array.from(document.querySelectorAll('#catalog-body .open-bundle'))
+      .find((node) => node.dataset.bundleId === bundleId);
+    (rowButton || $('#search-input') || $('#catalog-title')).focus({ preventScroll: true });
+    $('#catalog').scrollIntoView({ behavior: scrollBehavior(), block: 'start' });
   });
   document.addEventListener('keydown', (event) => {
     if (document.querySelector('dialog[open]')) return;
@@ -585,49 +601,77 @@ function renderBundle(bundle) {
 }
 
 async function loadBundle(bundleId, reveal = false) {
+  if (reveal) state.interactionEpoch += 1;
+  const epoch = state.interactionEpoch;
   const sequence = ++state.loadSequence;
   window.RelationshipTimeline?.clear($('#relationship-timeline'));
   $('#dashboard').setAttribute('aria-busy', 'true');
   showNotice('正在加载会话统计…');
   try {
     const payload = await api(`/api/bundles/${encodeURIComponent(bundleId)}`);
-    if (sequence !== state.loadSequence) return;
+    if (sequence !== state.loadSequence || epoch !== state.interactionEpoch) return;
+    if (!payload.bundle || payload.bundle.id !== bundleId) throw requestFailure('response', 200);
     renderBundle(payload.bundle);
     $('#notice').hidden = true;
-    if (reveal) $('#dashboard').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    if (reveal && state.currentView === 'catalog') revealDetail();
   } catch (error) {
-    if (sequence === state.loadSequence) showNotice(error.message, true);
+    if (sequence === state.loadSequence && epoch === state.interactionEpoch) showNotice(error.message, true);
   } finally {
     if (sequence === state.loadSequence) $('#dashboard').setAttribute('aria-busy', 'false');
   }
 }
 
+function revealDetail() {
+  $('#case-title').focus({ preventScroll: true });
+  $('#dashboard').scrollIntoView({ behavior: scrollBehavior(), block: 'start' });
+}
+
 async function loadState(reloadActive = false) {
   const sequence = ++state.stateSequence;
-  const payload = await api('/api/state');
-  if (sequence !== state.stateSequence) return;
+  const epoch = state.interactionEpoch;
+  const activeId = state.activeBundle?.id;
+  state.catalogPhase = 'loading';
+  renderBundles();
+  let payload;
+  try {
+    payload = await api('/api/state');
+    if (!Array.isArray(payload.bundles) || payload.bundles.some((item) => !item || typeof item.id !== 'string')) {
+      throw requestFailure('response', 200);
+    }
+  } catch (error) {
+    if (sequence === state.stateSequence) { state.catalogPhase = 'error'; renderBundles(); }
+    throw error;
+  }
+  if (sequence !== state.stateSequence) return false;
+  state.catalogLoaded = true;
+  state.catalogPhase = 'ready';
   state.bundles = payload.bundles || [];
   window.LibraryWorkspace?.setBundles(state.bundles);
   window.AiWorkspace?.setBundles(state.bundles);
   renderEnvironment(payload);
   renderSync(payload.sync || {});
   renderBundles();
-  if (reloadActive && state.activeBundle && state.bundles.some((item) => item.id === state.activeBundle.id)) {
-    await loadBundle(state.activeBundle.id);
+  if (reloadActive && epoch === state.interactionEpoch && activeId === state.activeBundle?.id && state.bundles.some((item) => item.id === activeId)) {
+    await loadBundle(activeId);
   } else if (!state.bundles.length) {
     updateSteps(null);
     $('#empty-state').hidden = state.currentView !== 'catalog';
     $('#dashboard').hidden = true;
   }
+  return true;
 }
 
-$('#chat-file').addEventListener('change', (event) => {
-  const file = event.target.files[0];
+function selectImportFile(file) {
+  state.importRevision += 1;
   state.selectedFile = file || null;
   $('#file-label').textContent = file ? file.name : '选择聊天导出文件';
-  if (file?.name.toLowerCase().endsWith('.md') || file?.name.toLowerCase().endsWith('.txt')) {
-    $('#source-kind').value = 'markdown';
-  }
+  $('#source-kind').value = /\.(md|txt)$/i.test(file?.name || '') ? 'markdown' : 'auto';
+}
+$('#chat-file').addEventListener('change', (event) => selectImportFile(event.target.files[0]));
+$('#import-form').addEventListener('input', () => { state.importRevision += 1; });
+$('#import-form').addEventListener('change', () => { state.importRevision += 1; });
+$('#import-form').addEventListener('reset', () => {
+  selectImportFile(null);
 });
 
 const dropZone = $('#drop-zone');
@@ -643,47 +687,112 @@ dropZone.addEventListener('dragleave', (event) => {
 dropZone.addEventListener('drop', (event) => {
   event.preventDefault();
   dropZone.classList.remove('is-dragging');
-});
-dropZone.addEventListener('drop', (event) => {
-  const file = event.dataTransfer.files[0];
+  const file = event.dataTransfer?.files[0];
   if (!file) return;
-  state.selectedFile = file;
-  $('#file-label').textContent = file.name;
-  if (file.name.toLowerCase().endsWith('.md') || file.name.toLowerCase().endsWith('.txt')) {
-    $('#source-kind').value = 'markdown';
-  }
+  $('#chat-file').value = '';
+  selectImportFile(file);
+});
+
+function showImportResult(result, message, isError = false) {
+  state.importResult = result;
+  $('#import-result').hidden = false;
+  $('#import-result').classList.toggle('is-error', isError);
+  $('#import-result-message').textContent = message;
+  $('#import-result-message').setAttribute('role', isError ? 'alert' : 'status');
+  $('#import-result-open').hidden = !result?.bundleId;
+}
+
+function importUnavailable(result) {
+  showImportResult(result, '导入完成；该会话目前不在可见档案中，可能位于回收站或来源暂不可用。可查看回收站或刷新核对，未自动恢复会话。');
+}
+
+$('#import-result-open').addEventListener('click', async () => {
+  const result = state.importResult;
+  const button = $('#import-result-open');
+  if (!result?.bundleId || button.disabled) return;
+  const epoch = ++state.interactionEpoch;
+  const revision = state.importRevision;
+  setBusy(button, true, '正在核对档案…');
+  try {
+    const refreshed = await loadState(false);
+    if (state.importResult !== result) return;
+    if (!refreshed) {
+      showImportResult(result, '导入完成；档案正在更新，请再次点击“查看已导入会话”核对。');
+      return;
+    }
+    if (!state.bundles.some((item) => item.id === result.bundleId && !item.library?.hidden_at)) {
+      importUnavailable(result);
+      return;
+    }
+    if (epoch !== state.interactionEpoch || revision !== state.importRevision) return;
+    window.navigateWorkspace('catalog');
+    await loadBundle(result.bundleId, true);
+  } catch (_error) {
+    if (state.importResult === result) showImportResult(result, '导入完成；档案刷新暂时失败，请稍后点击“查看已导入会话”核对。此操作不会重新导入。');
+  } finally { setBusy(button, false); }
 });
 
 $('#import-form').addEventListener('submit', async (event) => {
   event.preventDefault();
+  if (state.importBusy) return;
   if (!window.ArchiveShell?.isEnabled('sync')) return showNotice('同步功能已停用，可在设置中启用后导入。', true);
-  const file = state.selectedFile || $('#chat-file').files[0];
+  const file = state.selectedFile;
   if (!file) return showNotice('先选择一份聊天导出文件。', true);
   if (file.size > 50 * 1024 * 1024) return showNotice('文件超过 50 MB，请先按联系人拆分。', true);
+  // Everything describing this submission is captured before asynchronous I/O.
+  const submitted = {
+    filename: file.name, kind: $('#source-kind').value,
+    contact: $('#contact-name').value.trim(), my_name: $('#my-name').value.trim() || '我',
+  };
+  const revision = state.importRevision;
+  const epoch = state.interactionEpoch;
+  const unchanged = () => revision === state.importRevision && epoch === state.interactionEpoch && file === state.selectedFile;
   const button = $('#import-button');
+  state.importBusy = true;
   setBusy(button, true, '正在本机整理…');
+  let postStarted = false;
   try {
     const content = await file.text();
+    postStarted = true;
     const payload = await api('/api/import', {
       method: 'POST',
-      body: JSON.stringify({
-        filename: file.name,
-        content,
-        kind: $('#source-kind').value,
-        contact: $('#contact-name').value.trim(),
-        my_name: $('#my-name').value.trim() || '我',
-      }),
+      body: JSON.stringify({ ...submitted, content }),
     });
-    await loadState(false);
-    renderBundle(payload.bundle);
-    showNotice('导入完成，统计已在本机生成。');
-    event.target.reset();
-    state.selectedFile = null;
-    $('#my-name').value = '我';
-    $('#file-label').textContent = '选择聊天导出文件';
+    if (!payload.bundle || typeof payload.bundle.id !== 'string' || !payload.bundle.id) {
+      throw requestFailure('response', 200, true);
+    }
+    const result = { bundleId: payload.bundle.id };
+    // A confirmed write remains confirmed even when the following GET fails.
+    showImportResult(result, '导入完成，统计已在本机生成。正在刷新档案…');
+    let refreshed;
+    try { refreshed = await loadState(false); }
+    catch (_error) {
+      showImportResult(result, '导入完成；档案刷新暂时失败，请点击“查看已导入会话”核对。此操作不会重新导入。');
+      return;
+    }
+    if (!refreshed) {
+      showImportResult(result, '导入完成；档案正在更新，请点击“查看已导入会话”核对。');
+      return;
+    }
+    if (!state.bundles.some((item) => item.id === result.bundleId && !item.library?.hidden_at)) {
+      importUnavailable(result);
+      return;
+    }
+    showImportResult(result, '导入完成，统计已在本机生成。可随时查看已导入会话。');
+    if (unchanged()) {
+      event.target.reset();
+      window.navigateWorkspace('catalog');
+      state.loadSequence += 1;
+      renderBundle(payload.bundle);
+      $('#dashboard').setAttribute('aria-busy', 'false');
+      revealDetail();
+    }
   } catch (error) {
-    showNotice(error.message, true);
+    if (!postStarted) showImportResult(null, '无法读取所选文件，请检查文件后重新选择。尚未提交导入。', true);
+    else if (error.outcomeUnknown) showImportResult(null, '无法确认本次导入是否完成。已保留输入，请先刷新档案核对，再决定是否再次提交；未自动重试。', true);
+    else showImportResult(null, error.message, true);
   } finally {
+    state.importBusy = false;
     setBusy(button, false);
   }
 });
