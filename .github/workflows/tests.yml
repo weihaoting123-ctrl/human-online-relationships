@@ -71,6 +71,20 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get install --no-install-recommends -y fonts-noto-cjk
 
+      - name: Keep synthetic temporary files in the canonical checkout path
+        shell: python
+        run: |
+          import os
+          from pathlib import Path
+          task_temp = (Path(os.environ['GITHUB_WORKSPACE']) / 'scripts' / 'tmp').resolve()
+          task_temp.mkdir(parents=True, exist_ok=True)
+          with open(os.environ['GITHUB_ENV'], 'a', encoding='utf-8') as output:
+              for name in ('TEMP', 'TMP', 'TMPDIR'):
+                  output.write(f'{name}={task_temp}\n')
+          # Windows runner TEMP may use an 8.3 alias on C:. The documented
+          # synthetic suite uses the checkout temp directory, keeping lexical
+          # and resolved boundaries equal without relaxing source protections.
+
       - name: Run every synthetic Python test, including the browser UI
         run: python -X utf8 -m unittest discover -s tests -p 'test_*.py' -v
 

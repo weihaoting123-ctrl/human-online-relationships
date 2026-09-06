@@ -10,6 +10,8 @@ import os
 import re
 import unittest
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
+from unittest.mock import patch
 
 import test_library_ui as fixtures
 
@@ -131,7 +133,18 @@ class AppleUIBrowserTests(unittest.TestCase):
         self.expect(self.page.locator(f'#{view}')).to_be_visible()
 
     def style(self, selector):
-        return self.page.locator(selector).first.evaluate(STYLE)
+        # Resolve and read styles in one browser execution. Separate element
+        # handle lookup/evaluation can observe a detached module after refresh.
+        snapshot = self.page.wait_for_function('''selector => {
+            const node = document.querySelector(selector);
+            if (!node?.isConnected) return false;
+            const value = (''' + STYLE + ''')(node);
+            return value.duration && value.transition ? value : false;
+        }''', arg=selector)
+        try:
+            return snapshot.json_value()
+        finally:
+            snapshot.dispose()
 
     def assert_text_contrast(self, selector, minimum=4.5):
         style = self.style(selector)
@@ -277,6 +290,20 @@ class AppleUIBrowserTests(unittest.TestCase):
             style = self.style(selector)
             self.assertTrue(style['animation'] == 'none' or all(float(value.rstrip('s')) <= .001 for value in style['duration'].split(', ')), style)
             self.assertTrue(all(float(value.rstrip('s')) <= .001 for value in style['transition'].split(', ')), style)
+
+    def test_style_snapshot_uses_live_dom_after_control_replacement(self):
+        self.open_view('settings')
+        old = self.page.locator('.module-toggle').first.element_handle()
+        old.evaluate('node => node.replaceWith(node.cloneNode(true))')
+        self.assertFalse(old.evaluate('node => node.isConnected'))
+        # Model the lookup/evaluate race: a module refresh can detach the node
+        # after a locator resolves. Keep the actual browser CSS engine and DOM;
+        # intercept only that stale locator handle at the cross-process boundary.
+        with patch.object(self.page, 'locator', return_value=SimpleNamespace(first=old)):
+            style = self.style('.module-toggle')
+        self.assertNotEqual(style['duration'], '', 'Snapshot must belong to the live replacement')
+        self.assertEqual(style['animation'], 'none')
+        self.assertTrue(all(float(value.rstrip('s')) <= .001 for value in style['transition'].split(', ')), style)
 
     def test_module_switch_geometry_and_hit_region_survive_both_themes(self):
         self.open_view('settings')

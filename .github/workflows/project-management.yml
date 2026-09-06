@@ -1,0 +1,65 @@
+name: Apply project management
+
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: 'Apply missing seeds and configured label changes (false = read-only plan)'
+        type: boolean
+        required: true
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: project-management
+  cancel-in-progress: false
+
+jobs:
+  management:
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.repository == 'weihaoting123-ctrl/human-online-relationships' &&
+      github.ref == 'refs/heads/main' &&
+      github.event.repository.default_branch == 'main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+    env:
+      PYTHONUTF8: '1'
+      PYTHONDONTWRITEBYTECODE: '1'
+      GITHUB_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+    steps:
+      - name: Check out the guarded workflow revision
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Python without installing dependencies
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: '3.12'
+
+      - name: Check the Git publication boundary
+        run: python scripts/check_public_release.py --root .
+
+      - name: Test the offline safety contract
+        run: python -X utf8 -m unittest discover -s tests -p test_project_management.py -v
+
+      - name: Preview the reconciliation (no mutations)
+        if: ${{ !inputs.apply }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python scripts/apply_project_management.py
+
+      - name: Apply the explicitly requested reconciliation
+        if: ${{ inputs.apply }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python scripts/apply_project_management.py --apply
+
+      # No artifacts, application data, persistent credentials, deployment,
+      # automatic retries, deletion, or automatic local status updates.
