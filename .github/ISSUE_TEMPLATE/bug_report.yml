@@ -1,0 +1,76 @@
+name: 缺陷报告（仅合成复现）
+description: 报告可用完全虚构数据复现的普通缺陷；安全漏洞请私下报告。
+title: "[Bug]: "
+labels: ["type:bug", "status:needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        请先阅读 [贡献指南](https://github.com/weihaoting123-ctrl/human-online-relationships/blob/main/CONTRIBUTING.md)。
+        不得提交真实聊天、联系人/账号、本机路径、数据库、音频、密钥、Token、Cookie、原始日志或真实截图。打码的个人资料仍不是合成资料。
+        潜在安全漏洞请使用 [私下报告](https://github.com/weihaoting123-ctrl/human-online-relationships/security/advisories/new)，不要在此公开。
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: 隐私与范围确认
+      options:
+        - label: 我仅使用完全虚构的合成材料；正文和附件均不含真实个人资料或凭据。
+          required: true
+        - label: 这是普通功能缺陷，不是应私下报告的潜在安全漏洞。
+          required: true
+  - type: dropdown
+    id: module_area
+    attributes:
+      label: 主要模块
+      description: 维护者会核对并添加 area 和 priority 标签。
+      options:
+        - dashboard（页面/主题/无障碍）
+        - timeline（时间统计/节点/关联）
+        - ai（授权/分析/分段缓存）
+        - library（管理库/标签/回收站）
+        - import-sync（导入/只读同步）
+        - media-voice（媒体/语音）
+        - backup（备份/恢复）
+        - docs（文档）
+        - ci（测试/发布）
+        - 不确定
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: 公开版本或提交
+      placeholder: 例如 0.1.0 或公开提交短哈希
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: 环境版本
+      description: 仅写系统、Python、Node、浏览器的产品名和版本；不要填写本机用户名、账号或路径。
+      placeholder: Windows 11；Python 3.12；浏览器及版本
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: 最小合成复现
+      description: 写步骤、虚构样本或小型测试代码。不得粘贴真实导出/聊天/日志，即使已经打码。
+      placeholder: |
+        1. 创建完全虚构的两条记录……
+        2. 使用哪个公开入口……
+        3. 观察到……
+    validations:
+      required: true
+  - type: textarea
+    id: expected_actual
+    attributes:
+      label: 期望行为与实际行为
+      description: 用自己的话概述。可写固定错误码；不要附原始日志、真实聊天截图或请求正文。
+    validations:
+      required: true
+  - type: textarea
+    id: impact
+    attributes:
+      label: 影响与已有检查
+      description: 是否每次出现、是否有绕行方式、运行了哪些合成测试；没有验证的部分请明确写出。

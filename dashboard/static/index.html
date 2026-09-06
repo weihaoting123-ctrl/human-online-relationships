@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>人类线上关系可视化</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/app.css"><link rel="stylesheet" href="/analysis-ui.css"><link rel="stylesheet" href="/backup-ui.css"><link rel="stylesheet" href="/library-ui.css"><link rel="stylesheet" href="/relationship-timeline.css"><link rel="stylesheet" href="/apple-ui.css">
+</head>
+<body>
+<a class="skip-link" href="#main">跳到主要内容</a>
+<header class="topbar">
+<a class="brand-lockup" href="#catalog" aria-label="人类线上关系可视化首页"><span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 28 28" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M16 15h5a3 3 0 0 1 3 3v6l-4-2h-4a3 3 0 0 1-3-3v-1"/><path d="M7 4h10a3 3 0 0 1 3 3v6a3 3 0 0 1-3 3h-7l-6 3V7a3 3 0 0 1 3-3Z"/><path d="M8 9h8M8 12h5"/></svg></span><span><strong class="brand-name">人类线上关系可视化</strong><span class="brand-subtitle">本地档案 · 关系时间线</span></span></a>
+<span class="privacy-seal"><i class="seal-dot" aria-hidden="true"></i><span class="privacy-copy"><span>归档只读</span><span class="privacy-separator" aria-hidden="true"> · </span><span>AI 按次确认</span></span></span>
+</header>
+<div class="shell">
+<aside class="rail" aria-label="档案导航">
+<p class="rail-heading">我的归档</p>
+<nav class="nav-list">
+<a class="nav-item is-active" href="#catalog" data-view="catalog" aria-current="page"><span><svg class="nav-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="4"/><path d="M8 3v18M12 8h5M12 12h5M12 16h3"/></svg>档案检索</span><span id="nav-count" class="nav-count">—</span></a>
+<a class="nav-item" href="#analysis-workspace" data-view="analysis-workspace" data-module-entry="analysis"><span><svg class="nav-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17V7a3 3 0 0 1 3-3h12a3 3 0 0 1 3 3v8a3 3 0 0 1-3 3H9l-6 3v-4Z"/><path d="M7 13v-2M12 13V8M17 13v-4"/></svg>AI 分析</span><span class="nav-hint">按需</span></a>
+<a class="nav-item" href="/exports/wechat-media/index.html" target="_blank" rel="noopener" data-module-entry="media"><span><svg class="nav-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="4"/><circle cx="8" cy="8" r="1.5"/><path d="m3 17 5-5 4 4 4-6 5 7"/></svg>图片相册</span><span aria-hidden="true">↗</span></a>
+<a class="nav-item" href="#maintenance" data-view="maintenance"><span><svg class="nav-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20 10a8 8 0 0 0-14-4L3 9m0-5v5h5M4 14a8 8 0 0 0 14 4l3-3m0 5v-5h-5"/></svg>同步与管理</span><span class="nav-hint">按需</span></a>
+<a class="nav-item" href="#trash" data-view="trash"><span><svg class="nav-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M9 6V3h6v3M6 6l1 15h10l1-15M10 10v7M14 10v7"/></svg>回收站</span><span id="trash-count" class="nav-count">0</span></a>
+<a class="nav-item" href="#settings" data-view="settings"><span><svg class="nav-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h7m4 0h5M4 12h2m4 0h10M4 18h10m4 0h2"/><circle cx="13" cy="6" r="2"/><circle cx="8" cy="12" r="2"/><circle cx="16" cy="18" r="2"/></svg>设置</span><span class="nav-hint">本机</span></a>
+</nav>
+<div class="rail-note"><strong>两条边界，分开运行</strong><p>归档仅在本机。云端 AI 仅在你选择会话、核对范围并确认后调用。</p><span class="storage-label">本机 · 原件保留</span></div>
+<div class="rail-note keyboard-note"><span>快速搜索</span><kbd>/</kbd><small>搜索词不会保存到浏览器历史。</small></div>
+</aside>
+<main id="main" class="main" tabindex="-1">
+<section id="notice" class="notice" hidden aria-live="polite" role="status"></section>
+<section id="catalog" class="catalog" aria-labelledby="catalog-title">
+<header class="page-heading"><div><p class="eyebrow">本机微信 / 会话索引</p><h1 id="catalog-title">会话档案</h1><p class="page-description">按名称、内容和时间查找；从会话清单进入统计详情。</p></div><button id="refresh-button" class="quiet-button" type="button">刷新档案</button></header>
+<div class="archive-ledger" aria-label="档案概览"><div><span>已归档会话</span><strong id="total-conversations">—</strong></div><div><span>已归档消息</span><strong id="total-messages">—</strong></div><div><span>可查看图片记录</span><strong id="total-images">—</strong></div><p>原话不在控制台显示<br><span>内容搜索仅返回匹配数量</span></p></div>
+<div class="catalog-card">
+<form id="catalog-search" class="search-form" role="search">
+<label class="mode-field"><span class="sr-only">搜索范围</span><select id="search-mode"><option value="names">会话名称</option><option value="content">聊天内容</option></select></label>
+<label class="query-field"><span class="sr-only">搜索关键词</span><span class="search-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></svg></span><input id="search-input" type="search" maxlength="200" autocomplete="off" spellcheck="false" placeholder="搜索联系人或群聊名称…" aria-describedby="search-help"></label>
+<button id="search-submit" class="primary-button" type="submit">搜索</button>
+</form>
+<p id="search-help" class="search-help">原名、别名和标签即时匹配；多个关键词用空格分开，同时满足才显示。置顶会话优先显示。按 / 聚焦，Esc 清空。</p>
+<div class="filter-bar">
+<label><span>会话类型</span><select id="filter-kind"><option value="all">全部类型</option><option value="direct">私聊／服务会话</option><option value="group">群聊</option><option value="unknown">类型待确认</option></select></label>
+<label class="topic-field"><span>初筛主题</span><select id="filter-topic"><option value="all">全部主题</option></select></label>
+<label class="tag-field"><span>我的标签</span><select id="filter-tag"><option value="all">全部标签</option></select></label>
+<fieldset class="date-fields"><legend>聊天日期</legend><label><span class="sr-only">开始日期</span><input id="date-from" type="date"></label><span aria-hidden="true">—</span><label><span class="sr-only">结束日期</span><input id="date-to" type="date"></label></fieldset>
+<button id="clear-filters" class="text-button" type="button">清空筛选</button>
+</div>
+<div class="results-toolbar"><p id="result-summary" role="status" aria-live="polite">正在读取本地档案…</p><div class="sort-controls"><label for="sort-select">排序</label><select id="sort-select"><option value="recent_desc">最近聊天优先</option><option value="oldest_asc">最早聊天优先</option><option value="messages_desc">消息从多到少</option><option value="messages_asc">消息从少到多</option><option value="name_asc">名称 A → Z</option><option value="name_desc">名称 Z → A</option><option value="matches_desc">匹配数量优先</option></select></div></div>
+<p id="search-status" class="search-status" role="status" aria-live="polite" hidden></p>
+<div class="table-scroll" tabindex="0" aria-label="会话清单，可横向滚动"><table class="catalog-table"><thead><tr><th scope="col">会话</th><th scope="col">类型 / 初筛主题</th><th scope="col" class="numeric">消息数</th><th scope="col">最近聊天</th><th scope="col">内容匹配</th></tr></thead><tbody id="catalog-body"></tbody></table></div>
+<div id="catalog-empty" class="catalog-empty" hidden><strong>没有找到符合条件的会话</strong><p>试试缩短关键词，或清空类型、主题和日期筛选。</p></div>
+<div class="pagination"><label>每页 <select id="page-size"><option value="25">25 条</option><option value="50">50 条</option><option value="100">100 条</option></select></label><span id="page-label">第 1 / 1 页</span><div><button id="prev-page" class="quiet-button" type="button" aria-label="上一页">← 上一页</button><button id="next-page" class="quiet-button" type="button" aria-label="下一页">下一页 →</button></div></div>
+</div>
+<p class="under-note">主题来自本机规则初筛，含候选主题，非人工确认；名称搜索的日期筛选按会话时间范围相交，内容搜索按每条消息日期精确过滤。</p>
+</section>
+<section id="empty-state" class="empty-state" hidden><h2>从第一份档案开始</h2><p>当前没有本地会话。可在下方导入已有导出，或检查自动归档状态。</p><a href="#maintenance">查看归档与导入 ↓</a></section>
+<section id="dashboard" class="detail-card" hidden aria-labelledby="case-title" aria-busy="false">
+<div class="case-header"><div><p class="eyebrow">会话统计 · 不含原话</p><h2 id="case-title">—</h2><p id="case-meta" class="case-meta">—</p></div><button id="close-detail" class="quiet-button" type="button">收起详情 ↑</button></div>
+<div class="case-actions"><button id="scope-ai-button" class="primary-button" type="button" data-module-entry="analysis">分析这个会话 →</button><button id="manage-conversation" class="quiet-button" type="button" aria-haspopup="dialog" aria-controls="conversation-dialog">管理会话资料</button><button id="analyze-button" class="quiet-button" type="button">重新计算统计</button><button id="report-button" class="quiet-button" type="button" hidden>生成完整报告</button><a id="report-link" class="primary-button as-link" href="#" target="_blank" rel="noreferrer" hidden>打开完整报告 ↗</a></div>
+<section id="relationship-timeline" class="relationship-timeline" hidden aria-label="所选会话关系时间线"></section>
+<div id="metrics" class="metric-grid"></div>
+<section class="evidence-section"><div class="section-heading compact"><div><p class="eyebrow">每日消息</p><h2>会话活跃轨迹</h2></div><div class="legend" aria-label="图例"><span class="you">你</span><span class="them">对方 / 其他成员</span></div></div><div class="chart-frame"><svg id="pulse-chart" viewBox="0 0 900 280" role="img" aria-label="每日消息轨迹" aria-describedby="chart-summary"></svg><p id="chart-empty" class="chart-empty" hidden>当前没有可绘制的日期数据。</p></div><p id="chart-summary" class="sr-only"></p></section>
+<div class="split-grid"><section class="panel"><p class="eyebrow">消息分布</p><h3>双方互动统计</h3><div id="balance-list" class="balance-list"></div></section><section class="panel"><p class="eyebrow">活跃时段</p><h3>一天里何时聊天</h3><div id="hour-chart" class="hour-chart" aria-label="24 小时活跃度"></div></section></div>
+<details class="scope-section"><summary>本地证据样本 <span>按时间范围生成，不发送给模型</span></summary><p id="scope-reason"></p><div id="scope-options" class="scope-options"></div><button id="sample-button" class="primary-button" type="button">生成本地证据样本</button><p class="under-note">只写入本机 <code>chat_history.txt</code>，不会自动发送给任何模型。</p></details>
+<section id="analysis-section" class="analysis-section" hidden><p class="eyebrow">已有深度分析</p><h2 id="analysis-title">—</h2><p id="analysis-verdict">—</p><div id="warning-list" class="warning-list"></div></section>
+</section>
+<section id="analysis-workspace" class="analysis-workspace" hidden aria-labelledby="workspace-title">
+<header class="page-heading"><div><p class="eyebrow">AI / 指定会话 · 指定范围</p><h1 id="workspace-title">AI 分析</h1><p class="page-description">先核对范围，再决定是否发送。每次分析独立保存，不覆盖历史报告。</p></div><span id="ai-config-badge" class="status-badge">尚未配置模型</span></header>
+<p id="analysis-module-stopped" class="module-boundary" hidden>AI 分析已停用。已有分析历史仍可查看；在设置中启用后可开始新的分析。</p>
+<ol class="analysis-route" aria-label="分析步骤"><li id="ai-step-scope" class="is-current"><span>1</span>选择对象与区间</li><li id="ai-step-confirm"><span>2</span>核对并授权发送</li><li id="ai-step-result"><span>3</span>查看分析报告</li></ol>
+<div class="ai-workbench">
+<div class="ai-input-column">
+<form id="ai-scope-form" class="workspace-panel"><fieldset id="ai-scope-fields"><legend>分析范围</legend>
+<label><span>查找联系人或群聊</span><input id="ai-contact-search" type="search" autocomplete="off" placeholder="输入名称筛选，不会发送给模型"></label>
+<label><span>分析对象</span><select id="ai-bundle" required><option value="">请选择一个会话</option></select></label>
+<p id="ai-contact-meta" class="field-note">选择联系人对应的私聊，或一个群聊。不跨会话合并人员身份。</p>
+<div class="range-presets" aria-label="快捷时间范围"><button type="button" data-ai-range="7">最近 7 天</button><button type="button" data-ai-range="30">最近 30 天</button><button type="button" data-ai-range="90">最近 90 天</button><button type="button" data-ai-range="all">全部日期</button></div>
+<div class="field-row"><label><span>开始日期</span><input id="ai-date-from" type="date" required></label><label><span>结束日期</span><input id="ai-date-to" type="date" required></label></div>
+<label><span>本次关注</span><select id="ai-focus"><option value="overview">对话摘要与行动项</option><option value="communication">沟通方式与互动变化</option><option value="business">业务推进与待办风险</option><option value="relationship">关系观察与边界建议</option></select></label>
+<div class="ai-mode-options" role="group" aria-label="文字覆盖方式"><label><input type="radio" name="ai-analysis-mode" value="sample" checked><span><strong>抽样文字</strong><small>按时间选取，控制分析规模</small></span></label><label><input type="radio" name="ai-analysis-mode" value="full"><span><strong>全量文字</strong><small>选定会话与日期内逐段分析</small></span></label></div>
+<label id="ai-sample-limit"><span>最多发送的文本样本</span><select id="ai-max-messages"><option value="100">100 条 · 轻量</option><option value="300" selected>300 条 · 标准</option><option value="600">600 条 · 扩展</option><option value="1200">1,200 条</option><option value="3000">3,000 条</option><option value="6000">6,000 条</option></select></label>
+<p id="ai-mode-note" class="field-note">抽样按时间分层选取。全部日期只改变时间范围，不会自动切换到全量文字。</p>
+<label class="consent-line"><input id="ai-include-voice" type="checkbox"><span>加入这个区间内已完成的语音转写。转写在本机生成，可能有识别错误；只加入文字，原始音频不上传。</span></label>
+<p class="field-note">只处理当前一个会话。全量文字包含所选日期内全部可用文字及勾选的转写；图片、原始音频和附件不参与分析。</p>
+<button id="ai-preview-button" class="primary-button" type="submit">在本机核对范围</button>
+</fieldset></form>
+<details id="ai-settings" class="workspace-panel settings-panel"><summary>模型连接设置 <span>API Key 只在本机加密保存</span></summary>
+<form id="ai-config-form"><fieldset id="ai-config-fields"><label><span>云端服务商</span><select id="ai-provider"><option value="openai">OpenAI</option><option value="deepseek">DeepSeek</option></select></label><p id="ai-endpoint" class="field-note">目标：api.openai.com</p><label><span>模型名称</span><input id="ai-model" type="text" maxlength="100" required autocomplete="off" placeholder="填写该服务商支持的模型 ID"></label><label><span>API Key</span><input id="ai-api-key" type="password" maxlength="512" autocomplete="new-password" placeholder="仅在此页面输入，不要发到聊天窗口"></label><p id="ai-key-note" class="field-note">尚未保存密钥。保存设置不会发送聊天或试用模型。</p><div class="settings-actions"><button id="ai-save-config" class="quiet-button" type="submit">保存连接</button><button id="ai-clear-config" class="text-button" type="button">移除连接</button></div></fieldset></form>
+<p class="field-note">模型调用可能产生服务商费用。发送后的数据保留规则由所选服务商决定，不能保证云端零留存。</p>
+</details>
+</div>
+<div class="ai-output-column">
+<section id="ai-placeholder" class="workspace-panel ai-placeholder"><span class="scope-glyph" aria-hidden="true">[ … ]</span><h2>沿着对话的时间线，看清变化</h2><p>选择一个会话和日期，再决定抽样或全量文字。核对后先看本机统计、覆盖范围与调用计划，确认授权才开始云端分析。</p><div class="privacy-points"><span>不自动发送</span><span>不混入其他会话</span><span>不修改微信</span></div></section>
+<section id="ai-preview" class="workspace-panel preview-panel" hidden aria-labelledby="ai-preview-title"><p class="eyebrow">发送前核对</p><h2 id="ai-preview-title">—</h2><p id="ai-preview-range" class="field-note"></p><div id="ai-preview-coverage"></div><dl id="ai-preview-counts" class="preview-counts"></dl><div id="ai-call-plan" class="ai-call-plan"></div><p id="ai-preview-recipient" class="recipient-note"></p><p id="ai-preview-limit" class="field-note"></p><p id="ai-preview-voice" class="field-note"></p><label class="consent-line"><input id="ai-consent" type="checkbox"><span id="ai-consent-text">我确认将上述范围内的脱敏文字和已选语音转写，按此处的分段及汇总调用计划发送给显示的服务商和模型。</span></label><label id="ai-retry-line" class="consent-line" hidden><input id="ai-retry-uncertain" type="checkbox"><span>重试失败或结果未知的分段（可能重复计费）。此前请求可能已到达服务商；这是本次单独确认的重试。</span></label><button id="ai-run-button" class="primary-button" type="button" disabled>确认并开始云端分析</button><p class="field-note">核对结果 10 分钟内有效；修改范围、模式、模型或源记录后需要重新核对。</p></section>
+<section id="ai-job-progress" class="workspace-panel ai-job-progress" hidden aria-labelledby="ai-progress-title"><div class="section-heading"><div><p class="eyebrow">本次分析进度</p><h2 id="ai-progress-title">准备开始</h2></div><span id="ai-progress-state" class="status-badge">等待中</span></div><p id="ai-progress-scope" class="field-note"></p><progress id="ai-progress-bar" max="1" value="0" aria-label="已完成的分析分段"></progress><p id="ai-progress-detail" role="status" aria-live="polite"></p><p id="ai-progress-note" class="field-note">每段完成后保存在本机。不会自动重试失败的请求。</p><div class="settings-actions"><button id="ai-cancel-job" class="quiet-button" type="button">停止后续调用</button><button id="ai-resume-poll" class="quiet-button" type="button" hidden>重新查看进度</button></div></section>
+<p id="ai-feedback" class="ai-feedback" role="status" aria-live="polite" hidden></p>
+<section id="ai-result" class="workspace-panel ai-result" hidden aria-labelledby="ai-result-title"><p class="eyebrow">分析报告 · 仅保存在本机</p><h2 id="ai-result-title">—</h2><p id="ai-result-meta" class="field-note"></p><p id="ai-result-status" class="ai-coverage-notice" hidden></p><div id="ai-result-recovery" class="ai-result-recovery" hidden><p id="ai-result-stop-reason" class="field-note"></p><button id="ai-recheck-partial" class="quiet-button" type="button">重新核对未完成部分</button><p class="field-note">恢复这份报告的会话、日期和文字选项，在本机重新核对。已完成结果能否复用以新计划为准；确认发送后才继续，失败或结果未知的请求仍需单独确认重试。</p></div><div id="ai-result-coverage"></div><p id="ai-result-summary" class="result-summary"></p><div id="ai-result-sections"></div><div id="ai-result-segments"></div><p class="field-note">模型可能误解语境。结论仅基于标明的文字覆盖范围，不是人格或心理疾病诊断，也不能据此断言感情或动机。</p></section>
+</div></div>
+<section id="ai-relationship-timeline" class="relationship-timeline" hidden aria-label="所选样本关系时间线"></section>
+<section id="ai-metrics" class="ai-metrics" hidden aria-label="所选会话日期范围的本机统计"></section>
+<section class="analysis-history"><div class="section-heading"><div><p class="eyebrow">每次分析，独立留档</p><h2>本地分析历史</h2></div><button id="ai-refresh-history" class="quiet-button" type="button">刷新历史</button></div><div id="ai-history-list" class="history-list"><p class="field-note">尚无分析记录。</p></div></section>
+</section>
+<section id="maintenance" class="maintenance" hidden aria-labelledby="maintenance-title">
+<div class="section-heading"><div><p class="eyebrow">同步 / 增量更新 · 本机管理</p><h1 id="maintenance-title">同步与备份</h1><p class="page-description">按需检查新增与变更；定时任务需另行配置，归档与 AI 分析相互独立。</p></div><span id="sync-badge" class="status-badge" aria-live="polite">检查中</span></div>
+<div class="incremental-summary"><div><span>执行频率</span><strong>按需配置</strong><small>可手动执行；定时任务需另行配置</small></div><div><span>消息策略</span><strong>变更分片校对</strong><small>保留补同步的历史消息，不仅按时间截取</small></div><div><span>附件与分类</span><strong>未变化就跳过</strong><small>仅处理新文件、变更文件和受影响的会话</small></div></div>
+<p id="incremental-status" class="sync-intro">正在读取最近一轮增量状态。</p>
+<p id="archive-summary" class="sync-intro">正在读取本地归档进度。</p>
+<section id="backup-panel" class="workspace-panel backup-panel" aria-labelledby="backup-title" aria-busy="false">
+<div class="section-heading"><div><p class="eyebrow">备份 / 独立副本 · 保留历史</p><h2 id="backup-title">微信聊天备份</h2></div><span id="backup-status-badge" class="status-badge" aria-live="polite">检查中</span></div>
+<p class="backup-destination">保存到 <strong>项目内 <code>backups/wechat</code></strong></p>
+<p id="backup-summary" class="sync-intro">正在读取本机备份状态。</p>
+<dl id="backup-counts" class="backup-counts" aria-label="备份文件分类数量"><div><dt>文字 / 消息文件</dt><dd id="backup-text-count">—</dd></div><div><dt>语音文件</dt><dd id="backup-voice-count">—</dd></div><div><dt>图片文件</dt><dd id="backup-image-count">—</dd></div><div><dt>其他文件</dt><dd id="backup-other-count">—</dd></div></dl>
+<dl class="backup-facts"><div><dt>最近成功备份</dt><dd id="backup-last-success">尚无</dd></div><div><dt>历史快照</dt><dd id="backup-snapshot-count">—</dd></div><div><dt>快照文件总量</dt><dd id="backup-bytes">—</dd></div></dl>
+<p id="backup-changes" class="field-note"></p><p id="backup-verification" class="field-note" hidden></p>
+<div class="backup-actions"><button id="backup-run" class="primary-button" type="button" disabled>立即备份</button><button id="backup-verify" class="quiet-button" type="button" disabled>校验备份</button><button id="backup-refresh" class="text-button" type="button">刷新状态</button></div>
+<p id="backup-feedback" class="backup-feedback" role="status" aria-live="polite" hidden></p>
+<details class="backup-history"><summary>备份历史 <span>仅显示时间与文件数量</span></summary><div id="backup-history-list"><p class="field-note">正在读取历史快照。</p></div></details>
+<p class="field-note backup-boundary">备份创建独立的本机副本，微信中的原记录不会删除。只备份已在本机归档的文字、语音、图片及其他文件；缺失或未下载的原件不会凭空恢复。同一磁盘上的副本不能防护整块磁盘损坏。</p>
+</section>
+<section class="workspace-panel" aria-labelledby="voice-archive-title"><div class="section-heading"><div><p class="eyebrow">语音 / 本机保存 · 本机转写</p><h2 id="voice-archive-title">语音也能留下、回听和搜索。</h2></div><span id="voice-status-badge" class="status-badge" aria-live="polite">检查中</span></div><p id="voice-archive-summary" class="sync-intro">正在读取语音归档进度。</p><div id="voice-archive-counts" class="sync-details"></div><p id="voice-transcribe-summary" class="field-note"></p><a id="voice-gallery-link" class="quiet-button as-link" href="/exports/wechat-voice/index.html" target="_blank" rel="noopener">查看本机语音与转写 ↗</a><p class="field-note">已归档的语音副本单独保留，转写可参与本机内容搜索。云端分析时，可在选定会话和日期后单独勾选加入转写；原始音频不上传。</p></section>
+<div class="resource-links"><a href="/exports/wechat-media/index.html" target="_blank" rel="noopener"><strong>图片月份相册 ↗</strong><span>按月份查看本机图片；部分格式为首帧预览</span></a><a href="/exports/classification/index.html" target="_blank" rel="noopener"><strong>静态分类清单 ↗</strong><span>查看第一轮分类报告；搜索筛选请使用上方会话索引</span></a></div>
+<div id="sync-attention" class="sync-attention" role="status" hidden></div>
+<details class="maintenance-panel" open><summary>同步详情 <span>只读微信，在本机副本去重</span></summary><div id="sync-details" class="sync-details"></div></details>
+<details class="maintenance-panel"><summary>导入已有聊天文件 <span>JSON / Markdown · 最大 50 MB</span></summary>
+<form id="import-form" class="import-grid" novalidate><label id="drop-zone" class="drop-zone" for="chat-file"><input id="chat-file" type="file" accept=".json,.md,.txt,application/json,text/plain"><span class="drop-symbol" aria-hidden="true">＋</span><strong id="file-label">选择聊天导出文件</strong><small>或拖到这里 · 仅保存在本机</small></label><div class="field-stack"><label><span>数据来源</span><select id="source-kind"><option value="auto">自动识别 JSON</option><option value="normalized-json">统一 messages.json</option><option value="weflow-cli">WeFlow CLI JSON</option><option value="ciphertalk">CipherTalk JSON</option><option value="weflow-json">旧 WeFlow JSON</option><option value="markdown">带时间戳 Markdown</option></select></label><div class="field-row"><label><span>对方称呼</span><input id="contact-name" type="text" maxlength="80" placeholder="例如：小林"></label><label><span>我的称呼</span><input id="my-name" type="text" maxlength="80" value="我"></label></div><button id="import-button" class="primary-button" type="submit">导入并生成统计</button></div></form>
+</details>
+<details class="maintenance-panel"><summary>本机环境 <span id="environment-badge" class="status-badge">检查中</span></summary><div id="environment-details" class="environment-details"></div></details>
+</section>
+<section id="trash" class="library-page" hidden aria-labelledby="trash-title">
+<header class="page-heading"><div><p class="eyebrow">本机资料 / 可恢复</p><h1 id="trash-title">回收站</h1><p class="page-description">移入回收站只隐藏会话，不会删除原始聊天、媒体或分析历史。恢复后可继续检索。</p></div><button id="trash-refresh" class="quiet-button" type="button">刷新回收站</button></header>
+<section class="workspace-panel"><label class="library-search"><span>搜索回收站</span><input id="trash-search" type="search" autocomplete="off" placeholder="名称、别名或标签"></label><p id="trash-feedback" class="library-feedback" role="status" aria-live="polite" hidden></p><div id="trash-list" class="trash-list"><p class="field-note">正在读取已隐藏会话…</p></div></section>
+</section>
+<section id="settings" class="library-page" hidden aria-labelledby="settings-title">
+<header class="page-heading"><div><p class="eyebrow">设置 / 只影响这份本机档案</p><h1 id="settings-title">设置</h1><p class="page-description">标签帮助你整理会话；可选功能可以单独停用，已有档案与历史保留。</p></div><button id="settings-refresh" class="quiet-button" type="button">刷新设置</button></header>
+<section class="workspace-panel" aria-labelledby="module-title"><div class="section-heading"><div><p class="eyebrow">功能开关</p><h2 id="module-title">按自己的使用方式安排</h2></div><span class="status-badge is-ready">核心功能始终启用</span></div><p class="field-note">档案检索、会话资料、回收站和本机访问保护始终可用。停用只关闭入口及新的处理，不删除文件，不中断已开始的任务。</p><div id="module-list" class="module-list"><p class="field-note">正在读取功能设置…</p></div><p id="module-feedback" class="library-feedback" role="status" aria-live="polite" hidden></p><div class="settings-links"><button id="open-model-settings" class="text-button" type="button">模型连接设置 →</button><a href="#analysis-workspace">查看已保存的分析 →</a></div></section>
+<section class="workspace-panel" aria-labelledby="tag-manager-title"><div class="section-heading"><div><p class="eyebrow">我的标签</p><h2 id="tag-manager-title">给会话一个自己的归类</h2></div></div><form id="tag-form" class="tag-form"><label><span>标签名称</span><input id="tag-name" type="text" maxlength="40" required autocomplete="off" placeholder="例如：老同学、项目协作"></label><label><span>标签颜色</span><select id="tag-color"><option value="#365ecb">蓝色</option><option value="#237f72">绿色</option><option value="#986919">赭色</option><option value="#ac3a3f">红色</option><option value="#506478">灰色</option></select></label><div class="tag-form-actions"><button id="tag-save" class="quiet-button" type="submit">创建标签</button><button id="tag-cancel" class="text-button" type="button" hidden>取消编辑</button></div></form><p id="tag-feedback" class="library-feedback" role="status" aria-live="polite" hidden></p><div id="tag-list" class="tag-list"></div><p class="field-note">删除标签会从筛选和会话标签中移除它，聊天原件保留。</p></section>
+<details id="tag-deleted" class="workspace-panel deleted-tags" hidden><summary>已删除的标签 <span id="tag-deleted-count"></span></summary><p class="field-note">标签可以恢复。若名称已被其他标签占用，请先修改重复名称再恢复。</p><div id="tag-deleted-list"></div></details>
+<section class="workspace-panel" aria-labelledby="library-health-title"><div class="section-heading"><div><p class="eyebrow">本机存储</p><h2 id="library-health-title">资料库状态</h2></div><span id="library-health-badge" class="status-badge">正在检查</span></div><p id="library-health-detail" class="field-note">别名、备注、标签和功能设置独立保存在本机资料库。</p><p class="field-note">会话资料不会写入原始聊天文件，搜索词和备注不会保存到浏览器历史。</p></section>
+</section>
+<dialog id="conversation-dialog" class="conversation-dialog" aria-labelledby="conversation-dialog-title" aria-describedby="conversation-original"><div class="conversation-dialog-header"><div><p class="eyebrow">会话资料 / 仅本机可见</p><h2 id="conversation-dialog-title">管理会话资料</h2></div><button id="conversation-close" class="quiet-button" type="button" aria-label="关闭会话资料">关闭 ×</button></div><p id="conversation-original" class="conversation-original"></p><form id="conversation-form"><fieldset id="conversation-fields"><label><span>别名</span><input id="conversation-alias" type="text" maxlength="80" autocomplete="off" placeholder="留空时显示原始名称"></label><label><span>私人备注</span><textarea id="conversation-note" rows="4" maxlength="4000" placeholder="记下便于自己回想的信息"></textarea></label><label class="pin-choice"><input id="conversation-pinned" type="checkbox"><span>置顶到会话清单前面</span></label><fieldset class="conversation-tag-field"><legend>我的标签</legend><div id="conversation-tags" class="conversation-tags"></div></fieldset><button id="conversation-save" class="primary-button" type="submit">保存资料</button></fieldset></form><p id="conversation-feedback" class="library-feedback" role="status" aria-live="polite" hidden></p><button id="conversation-reload" class="text-button" type="button" hidden>重新载入最新资料（放弃未保存修改）</button><div class="conversation-hide-area"><h3>暂时收起这个会话</h3><p id="conversation-hide-note" class="field-note">移入回收站后不再出现在档案检索中；不会删除聊天原件、图片、语音或分析历史，随时可以恢复。</p><button id="conversation-hide" class="danger-button" type="button">移入回收站</button></div></dialog>
+<footer><span>人类线上关系可视化 · 本地档案</span><span>完整原始文件另行保留。统计不是诊断。</span></footer>
+</main>
+</div>
+<dialog id="relationship-event-dialog" aria-labelledby="relationship-event-title"><header class="rt-dialog-heading"><h2 id="relationship-event-title">时间节点</h2><button class="quiet-button rt-dialog-close" type="button" aria-label="关闭时间节点详情">关闭</button></header><div id="relationship-event-body"></div><div class="rt-dialog-actions"><button class="primary-button rt-analyze-range" type="button" hidden>选择这个范围分析</button></div></dialog>
+<script src="/core.js" defer></script><script src="/catalog.js" defer></script><script src="/relationship-timeline.js" defer></script><script src="/app.js" defer></script><script src="/shell.js" defer></script><script src="/library-ui.js" defer></script><script src="/analysis-charts.js" defer></script><script src="/backup-ui.js" defer></script><script src="/analysis-ui.js" defer></script>
+</body>
+</html>

@@ -1,0 +1,6 @@
+# Public test tools only. Optional WeChat/voice runtimes are not bootstrapped in CI.
+-r requirements.txt
+
+# Verified against the official PyPI releases; keep browser and client in sync.
+playwright==1.62.0
+pip-audit==2.10.1

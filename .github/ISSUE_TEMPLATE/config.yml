@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 私下报告安全漏洞
+    url: https://github.com/weihaoting123-ctrl/human-online-relationships/security/advisories/new
+    about: 不要公开漏洞细节；仅提供合成复现，勿附真实聊天、日志或凭据。
+  - name: 阅读贡献与隐私约定
+    url: https://github.com/weihaoting123-ctrl/human-online-relationships/blob/main/CONTRIBUTING.md
+    about: 查看模块标签、合成测试及提交范围要求。

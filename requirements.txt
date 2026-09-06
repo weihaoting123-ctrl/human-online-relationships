@@ -1,0 +1,5 @@
+pycryptodome>=3.19,<4
+zstandard>=0.22,<1
+sqlcipher3==0.6.2; platform_system == "Windows"
+pymem==1.14.0; platform_system == "Windows"
+Pillow==12.3.0

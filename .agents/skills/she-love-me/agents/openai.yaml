@@ -1,0 +1,8 @@
+interface:
+  display_name: "人类线上关系可视化"
+  short_description: "本地只读归档聊天，呈现互动阶段、联系间隔与有依据的计划进展时间线"
+  brand_color: "#0066CC"
+  default_prompt: "使用 $she-love-me 在本机整理关系时间线；区分互动统计、计划进展与未知原因，仅在我逐次确认后分析选定文字。"
+
+policy:
+  allow_implicit_invocation: true

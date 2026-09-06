@@ -1,0 +1,36 @@
+/* The file ledger carries the existing archive identity; all values are local aggregates. */
+.backup-panel { margin: 22px 0; border-top: 3px solid var(--plum); }
+.backup-panel h2 { margin: 0; }
+.backup-destination { color: var(--ink-soft); font-size: 12px; margin: 8px 0 16px; }
+.backup-destination strong { color: var(--ink); font-weight: 500; }
+.backup-destination code { font: 11px var(--mono); overflow-wrap: anywhere; }
+.backup-counts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); margin: 20px 0; border-block: 1px solid var(--rule); }
+.backup-counts > div { padding: 15px 18px; border-left: 1px solid var(--rule); }
+.backup-counts > div:first-child { padding-left: 0; border-left: 0; }
+.backup-counts dt, .backup-facts dt { color: var(--ink-faint); font-size: 11px; }
+.backup-counts dd { margin: 6px 0 0; font: 600 22px/1.4 var(--display); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.backup-facts { display: grid; grid-template-columns: 1.6fr 1fr 1fr; gap: 18px; margin: 0 0 16px; }
+.backup-facts dd { margin: 4px 0 0; color: var(--ink-soft); font-size: 12px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.backup-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin: 20px 0 10px; }
+.backup-feedback { font-size: 12px; color: var(--plum); line-height: 1.8; }
+.backup-feedback.is-error { color: var(--danger); }
+.backup-history { border-top: 1px solid var(--rule); margin-top: 20px; }
+.backup-history > summary { font-size: 12px; }
+.backup-history > summary > span { font-size: 10px; color: var(--ink-faint); margin-left: 10px; }
+.backup-history-list { list-style: none; padding: 0; margin: 0 0 18px; }
+.backup-history-row { display: grid; grid-template-columns: 190px minmax(0, 1fr) auto; gap: 5px 18px; padding: 12px 0; border-bottom: 1px solid var(--rule); font-size: 11px; color: var(--ink-soft); font-variant-numeric: tabular-nums; }
+.backup-history-row time { font-weight: 500; color: var(--ink); }
+.backup-history-row small { grid-column: 2 / -1; color: var(--ink-faint); font-size: 10px; }
+.backup-boundary { margin-top: 16px; max-width: 88ch; }
+@media (max-width: 600px) {
+  .backup-counts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .backup-counts > div { padding: 12px; }
+  .backup-counts > div:nth-child(3) { padding-left: 0; border-left: 0; }
+  .backup-counts > div:nth-child(n+3) { border-top: 1px solid var(--rule); }
+  .backup-counts dd { font-size: 20px; }
+  .backup-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+  .backup-facts > div:first-child { grid-column: 1 / -1; }
+  .backup-history > summary > span { display: block; margin-left: 0; }
+  .backup-history-row { grid-template-columns: minmax(0, 1fr) auto; }
+  .backup-history-row time, .backup-history-row small { grid-column: 1 / -1; }
+}

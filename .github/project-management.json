@@ -1,0 +1,176 @@
+{
+  "schema_version": 1,
+  "repository": {
+    "owner": "weihaoting123-ctrl",
+    "name": "human-online-relationships"
+  },
+  "application_status": "pending",
+  "description": "待人工核对并应用的 GitHub 管理配置；本文件不会自动创建、修改或关闭任何远端资源。应用前按名称核对已有资源，避免重复创建。pending 表示配置尚待应用，不是 GitHub API 的 milestone state 值。",
+  "labels": [
+    {
+      "name": "area:dashboard",
+      "color": "1d76db",
+      "description": "页面壳、导航、表单、主题与无障碍"
+    },
+    {
+      "name": "area:timeline",
+      "color": "1d76db",
+      "description": "本机时间统计、事件显示、覆盖与关联"
+    },
+    {
+      "name": "area:ai",
+      "color": "1d76db",
+      "description": "逐次授权、模型响应约束、分段、缓存与费用保护"
+    },
+    {
+      "name": "area:library",
+      "color": "1d76db",
+      "description": "管理数据库、别名、备注、标签和回收站"
+    },
+    {
+      "name": "area:import-sync",
+      "color": "1d76db",
+      "description": "格式导入、只读同步与本地流水线"
+    },
+    {
+      "name": "area:media-voice",
+      "color": "1d76db",
+      "description": "图片、语音、本地转写与派生索引"
+    },
+    {
+      "name": "area:backup",
+      "color": "1d76db",
+      "description": "不可变快照、校验与隔离恢复"
+    },
+    {
+      "name": "area:privacy-security",
+      "color": "1d76db",
+      "description": "隐私和安全改进；未修复漏洞仅私下报告"
+    },
+    {
+      "name": "area:docs",
+      "color": "1d76db",
+      "description": "安装、使用、开发和维护文档"
+    },
+    {
+      "name": "area:ci",
+      "color": "1d76db",
+      "description": "合成测试、持续集成与发布检查"
+    },
+    {
+      "name": "type:bug",
+      "color": "d73a4a",
+      "description": "已有功能缺陷"
+    },
+    {
+      "name": "type:feature",
+      "color": "a2eeef",
+      "description": "新增能力或已接受的功能建议"
+    },
+    {
+      "name": "type:docs",
+      "color": "0075ca",
+      "description": "文档修订、说明与示例"
+    },
+    {
+      "name": "type:maintenance",
+      "color": "cfd3d7",
+      "description": "维护、依赖和发布准备"
+    },
+    {
+      "name": "type:test",
+      "color": "5319e7",
+      "description": "合成测试、回归与人工验收"
+    },
+    {
+      "name": "priority:P0",
+      "color": "b60205",
+      "description": "已确认严重隐私/安全风险或不可恢复数据损失；先私下处置"
+    },
+    {
+      "name": "priority:P1",
+      "color": "d93f0b",
+      "description": "核心流程阻断、授权/数据边界错误或严重回归"
+    },
+    {
+      "name": "priority:P2",
+      "color": "fbca04",
+      "description": "常规缺陷和已接受迭代功能；默认优先级"
+    },
+    {
+      "name": "priority:P3",
+      "color": "c2e0c6",
+      "description": "可延后的低影响体验、文案与改进"
+    },
+    {
+      "name": "status:needs-triage",
+      "color": "ededed",
+      "description": "范围、模块或优先级尚待维护者核对"
+    }
+  ],
+  "milestones": [
+    {
+      "title": "v0.1.0 · 公开基线",
+      "description": "首个公开源码基线的发布验收。按 ROADMAP.md 核对文件与历史隐私、干净克隆验证、来源许可证和版本一致性、私下漏洞报告及表单。当前为待执行配置，不表示远端资源已建立或发布已完成。",
+      "status": "pending"
+    },
+    {
+      "title": "v0.2.0 · 可复现体验与管理效率",
+      "description": "候选迭代：完全合成演示、无内容诊断摘要、批量管理保护、时间线屏幕阅读器验收。每项须满足 ROADMAP.md 的合成验收；不承诺到期日，不代表功能已经实现。",
+      "status": "pending"
+    }
+  ],
+  "issues": [
+    {
+      "title": "[基线] 完成 v0.1.0 公开发布验收",
+      "body": "## 目标\n\n将当前源码基线按公开发布门槛核验，不借用私人部署环境证明干净克隆可用。本条为待执行检查，不声称 Release 已创建。\n\n## 验收\n\n- [ ] 检查待发布文件及 Git 历史，仅含代码、许可证、文档和合成夹具，不含个人资料或凭据。\n- [ ] 从干净克隆复验文档入口，记录实际通过、跳过和失败；明确平台及依赖限制。\n- [ ] 核对来源与许可证、VERSION、CHANGELOG、Git 标签和 Release 一致；v0.1.0 不冒称上游 v3 等历史为自有发布。\n- [ ] 启用 GitHub 私下漏洞报告，检查表单链接与基础分诊标签。\n\n## 非目标\n\n不导入私人数据，不重跑真实同步、备份或模型分析，不新增定时自动化。\n\n## 边界\n\n仅使用完全合成材料，不上传真实聊天、账号、本机路径、日志原文、截图或凭据。潜在漏洞按 SECURITY.md 私下报告。AI 辅助检查不是渗透测试或安全认证。验收以 ROADMAP.md 为准，未验证不得勾选完成。\n",
+      "labels": [
+        "area:ci",
+        "area:docs",
+        "type:maintenance",
+        "priority:P1"
+      ],
+      "milestoneTitle": "v0.1.0 · 公开基线"
+    },
+    {
+      "title": "[功能] 完全合成的独立演示模式",
+      "body": "## 目标\n\n让读者在不配置个人账号和云密钥的情况下，用完全虚构的数据体验单会话关系时间线。\n\n## 验收\n\n- [ ] 从干净克隆按文档启动虚构会话演示，不需要微信登录、个人文件或云密钥。\n- [ ] 页面持续显示“合成演示”，不将示例当作真实关系事实。\n- [ ] 不发现、读取或修改真实资料目录；合成边界测试覆盖误配置和失败路径。\n- [ ] 退出后只清理明确的演示临时目录，不清理其他目录。\n\n## 非目标\n\n不加入真实聊天演示包，不自动联网分析，不扩展为跨会话身份网络。\n\n## 边界\n\n仅使用完全合成材料，不上传真实聊天、账号、本机路径、日志原文、截图或凭据。潜在漏洞按 SECURITY.md 私下报告。AI 辅助检查不是渗透测试或安全认证。验收以 ROADMAP.md 为准，未验证不得勾选完成。\n",
+      "labels": [
+        "area:dashboard",
+        "type:feature",
+        "priority:P2"
+      ],
+      "milestoneTitle": "v0.2.0 · 可复现体验与管理效率"
+    },
+    {
+      "title": "[功能] 可预览的无内容诊断摘要导出",
+      "body": "## 目标\n\n提供用户主动触发、导出前可检查的固定白名单诊断摘要，减少故障排查时误发私人日志的风险。\n\n## 验收\n\n- [ ] 只导出公开版本、模块可用性与固定错误码白名单，导出前可预览。\n- [ ] 默认和异常分支均不含聊天、账号、文件路径、请求正文、日志原文或凭据。\n- [ ] 合成敏感标记测试覆盖嵌套对象和异常信息，证明没有敏感字段进入摘要。\n- [ ] 文档说明它不是完整日志，不会自动上传或附加到 Issue。\n\n## 非目标\n\n不收集遥测，不自动报告故障，不从私人归档抽样构建诊断内容。\n\n## 边界\n\n仅使用完全合成材料，不上传真实聊天、账号、本机路径、日志原文、截图或凭据。潜在漏洞按 SECURITY.md 私下报告。AI 辅助检查不是渗透测试或安全认证。验收以 ROADMAP.md 为准，未验证不得勾选完成。\n",
+      "labels": [
+        "area:privacy-security",
+        "type:feature",
+        "priority:P2"
+      ],
+      "milestoneTitle": "v0.2.0 · 可复现体验与管理效率"
+    },
+    {
+      "title": "[功能] 批量管理预览与版本冲突保护",
+      "body": "## 目标\n\n为标签、置顶与隐藏操作提供明确目标预览和可核对结果，保持原件只读与乐观版本保护。\n\n## 验收\n\n- [ ] 提交前显示精确目标数量和拟改字段，并等待明确确认。\n- [ ] 按各会话版本检测冲突；冲突不静默覆盖，结果逐项可核对。\n- [ ] 保留软删标签关联，隐藏可恢复，不批量物理删除聊天。\n- [ ] 合成测试覆盖中途失败、版本改变、重复提交和隐藏后恢复。\n\n## 非目标\n\n不重命名原始数据包，不覆盖源消息，不授予批量删除微信/QQ 数据权限。\n\n## 边界\n\n仅使用完全合成材料，不上传真实聊天、账号、本机路径、日志原文、截图或凭据。潜在漏洞按 SECURITY.md 私下报告。AI 辅助检查不是渗透测试或安全认证。验收以 ROADMAP.md 为准，未验证不得勾选完成。\n",
+      "labels": [
+        "area:library",
+        "type:feature",
+        "priority:P2"
+      ],
+      "milestoneTitle": "v0.2.0 · 可复现体验与管理效率"
+    },
+    {
+      "title": "[验收] 时间线屏幕阅读器人工验证",
+      "body": "## 目标\n\n用实际辅助技术验收时间线的可理解性，不把已有键盘测试或 AI 审查等同于屏幕阅读器验收。\n\n## 验收\n\n- [ ] 仅用合成记录，记录至少一种桌面屏幕阅读器的名称、版本和可重复验收步骤。\n- [ ] 可理解本机统计与 AI 推断的区别、部分覆盖、节点类型、弹窗名称和分页状态。\n- [ ] 仅用键盘完成打开、关闭和返回焦点；长内容和空状态可访问。\n- [ ] 修复发现的缺陷并复验，留下可重复结果；没有验证的环境明确标记。\n\n## 非目标\n\n不使用真实聊天做演示，不宣称通过无障碍认证或渗透测试。\n\n## 边界\n\n仅使用完全合成材料，不上传真实聊天、账号、本机路径、日志原文、截图或凭据。潜在漏洞按 SECURITY.md 私下报告。AI 辅助检查不是渗透测试或安全认证。验收以 ROADMAP.md 为准，未验证不得勾选完成。\n",
+      "labels": [
+        "area:timeline",
+        "type:test",
+        "priority:P2"
+      ],
+      "milestoneTitle": "v0.2.0 · 可复现体验与管理效率"
+    }
+  ]
+}
