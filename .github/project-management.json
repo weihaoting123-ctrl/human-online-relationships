@@ -4,8 +4,8 @@
     "owner": "weihaoting123-ctrl",
     "name": "human-online-relationships"
   },
-  "application_status": "pending",
-  "description": "待人工核对并应用的 GitHub 管理配置；本文件不会自动创建、修改或关闭任何远端资源。应用前按名称核对已有资源，避免重复创建。pending 表示配置尚待应用，不是 GitHub API 的 milestone state 值。",
+  "application_status": "applied",
+  "description": "2026-09-06 已回读核对 20 个配置标签、2 个里程碑及 5 个种子 Issue。applied 仅表示管理资源已建立，不表示候选功能或发布验收已经完成。克隆此文件不会自动操作远端；仅显式运行手动管理工作流才会应用配置。里程碑种子的 pending 是计划元数据，不是 GitHub API 的 state 值。",
   "labels": [
     {
       "name": "area:dashboard",

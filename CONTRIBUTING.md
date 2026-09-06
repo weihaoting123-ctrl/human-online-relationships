@@ -49,7 +49,7 @@
 
 `status:needs-triage` 表示尚未核对范围和优先级。优先级不是修复时限或服务等级承诺。里程碑表达计划版本，Issue 中的验收条件才决定是否完成。
 
-可复用的标签、里程碑和 Issue 种子见 [待应用管理配置](.github/project-management.json)。它是供维护者核对的静态配置，状态为 `pending`，不会自动建立 GitHub 资源；应用前按名称检查已有资源以免重复。功能验收仍以 [ROADMAP](ROADMAP.md) 为准，配置存在不表示发布或迭代已经完成。
+可复用的标签、里程碑和 Issue 种子见 [管理配置](.github/project-management.json)。首次应用已经回读核对，`application_status: applied` 只记录管理资源已建立，不代表迭代功能完成。克隆配置不会自动操作远端；再次应用前须检查已有资源以免重复。功能验收仍以 [ROADMAP](ROADMAP.md) 为准。
 
 ### 手动应用管理配置
 

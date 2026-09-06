@@ -6,6 +6,8 @@
 
 公开仓库只包含源码、文档和合成测试，不包含开发者的聊天、联系人、媒体、数据库、凭据、备份或运行日志。
 
+[自动测试](https://github.com/weihaoting123-ctrl/human-online-relationships/actions/workflows/tests.yml) · [版本发布](https://github.com/weihaoting123-ctrl/human-online-relationships/releases) · [迭代里程碑](https://github.com/weihaoting123-ctrl/human-online-relationships/milestones) · [功能与缺陷待办](https://github.com/weihaoting123-ctrl/human-online-relationships/issues) · [公开验证记录](docs/release-verification.md)
+
 ## 当前功能
 
 | 模块 | 能做什么 |
@@ -70,7 +72,12 @@ python -m venv .venv
 ```powershell
 .\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
 .\.venv\Scripts\python.exe -m playwright install chromium
+$taskTemp = Join-Path (Get-Location) 'scripts\tmp'
+New-Item -ItemType Directory -Force -Path $taskTemp | Out-Null
+$env:TEMP = (Resolve-Path $taskTemp).Path
+$env:TMP = $env:TEMP
 $env:SHE_LOVE_ME_UI_TESTS = '1'
+$env:SHE_LOVE_ME_UI_SCREENSHOTS = '0'
 .\.venv\Scripts\python.exe -m unittest discover -s tests -p 'test_*.py'
 node --test tests/test_catalog.cjs
 .\.venv\Scripts\python.exe scripts/check_public_release.py --root .

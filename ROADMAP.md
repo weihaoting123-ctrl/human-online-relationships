@@ -8,12 +8,12 @@
 
 公开发布门槛：
 
-- [ ] 仅发布代码、许可文档和合成夹具；检查待发布文件及 Git 历史不含个人数据或凭据。
-- [ ] 从干净克隆复验文档入口，记录相关测试通过/跳过/失败，不借用私人部署环境证明可安装。
+- [x] 仅发布代码、许可文档和合成夹具；检查待发布文件及 Git 历史不含个人数据或凭据。
+- [x] 从干净克隆复验文档入口，记录相关测试通过/跳过/失败，不借用私人部署环境证明可安装。
 - [ ] 核对来源和许可证、`VERSION`、CHANGELOG、标签与 Release 一致。
-- [ ] 启用 GitHub 私下漏洞报告，核对表单链接和基础分诊标签。
+- [x] 启用 GitHub 私下漏洞报告，核对表单链接和基础分诊标签。
 
-以上是发布检查项，必须由实际发布结果勾选；当前源码具备某能力不自动等于公开发布已完成。
+以上按实际结果勾选，证据见 [公开验证记录](docs/release-verification.md) 和 [发布验收 Issue #6](https://github.com/weihaoting123-ctrl/human-online-relationships/issues/6)。版本与 Release 核对在发布后单独完成。
 
 ## v0.2.0：可复现体验与管理效率（候选，未实现）
 
@@ -35,4 +35,4 @@
 
 ## 管理方式
 
-建议维护两个里程碑：`v0.1.0 · 公开基线` 和 `v0.2.0 · 可复现体验与管理效率`，不预设到期日。首个里程碑只有发布门槛完成后关闭；后者收纳上表已接受的候选，而非把所有建议都视作承诺。标签说明见 [贡献指南](CONTRIBUTING.md)。
+已建立 [v0.1.0 · 公开基线](https://github.com/weihaoting123-ctrl/human-online-relationships/milestone/1) 和 [v0.2.0 · 可复现体验与管理效率](https://github.com/weihaoting123-ctrl/human-online-relationships/milestone/2)，不预设到期日。首个里程碑只有发布门槛完成后关闭；后者的四项工作分别记录在 [#7](https://github.com/weihaoting123-ctrl/human-online-relationships/issues/7)、[#8](https://github.com/weihaoting123-ctrl/human-online-relationships/issues/8)、[#9](https://github.com/weihaoting123-ctrl/human-online-relationships/issues/9)、[#10](https://github.com/weihaoting123-ctrl/human-online-relationships/issues/10)，仍待实现或人工验收。标签说明见 [贡献指南](CONTRIBUTING.md)。
