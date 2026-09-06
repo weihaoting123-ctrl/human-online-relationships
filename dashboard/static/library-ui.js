@@ -53,7 +53,6 @@
     }
     renderBundles();
     window.AiWorkspace?.setBundles(state.bundles);
-    $('#empty-state').hidden = state.currentView !== 'catalog' || Boolean(state.bundles.length);
   }
   function renderHealth(error = false) {
     const health = library.health || {};
@@ -168,11 +167,17 @@
       loaded = true; renderTags(); renderTrash(); renderHealth(); applyCatalogMetadata();
     } catch (error) { renderHealth(true); throw error; }
   }
+  function invalidateCatalogRead() {
+    state.stateSequence += 1;
+    // Invalidating a pending read must also settle its loading state. A known
+    // snapshot remains usable; an unfinished first read needs a fresh GET.
+    if (state.catalogPhase === 'loading') state.catalogPhase = state.catalogLoaded ? 'ready' : 'error';
+  }
   function replaceConversation(value) {
     librarySequence += 1;
     // A catalog/detail response started before this write must not reinstall
     // old metadata or bring a newly hidden conversation back into the view.
-    state.stateSequence += 1; state.loadSequence += 1;
+    invalidateCatalogRead(); state.loadSequence += 1;
     $('#dashboard').setAttribute('aria-busy', 'false');
     const index = library.conversations.findIndex((item) => item.bundle_id === value.bundle_id);
     if (index < 0) library.conversations.push(value);
@@ -181,7 +186,7 @@
   }
   function replaceTag(value) {
     librarySequence += 1;
-    state.stateSequence += 1;
+    invalidateCatalogRead();
     const index = library.tags.findIndex((item) => item.id === value.id);
     if (index < 0) library.tags.push(value); else library.tags[index] = { ...library.tags[index], ...value };
     renderTags(); applyCatalogMetadata(); renderTrash(); renderHealth();

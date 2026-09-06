@@ -5,6 +5,8 @@
 const state = {
   currentView: 'catalog', bundles: [], activeBundle: null,
   selectedSince: null, selectedFile: null, loadSequence: 0, stateSequence: 0,
+  catalogLoaded: false, catalogPhase: 'loading', interactionEpoch: 0,
+  importRevision: 0, importBusy: false, importResult: null,
   searchSequence: 0, searchController: null, matches: null, searchPhase: 'idle',
   filters: { query: '', mode: 'names', kind: 'all', topic: 'all', tag: 'all', from: '', to: '', sort: 'recent_desc', page: 1, pageSize: 25 },
 };
@@ -15,18 +17,54 @@ const el = (tag, className, text) => {
   if (text !== undefined) node.textContent = text;
   return node;
 };
+function requestFailure(code, status = 0, write = false) {
+  const messages = {
+    network: '无法连接本机服务，请检查服务后刷新。',
+    cancelled: '请求已取消，请刷新核对当前状态。',
+    timeout: '等待本机服务超时，请刷新核对当前状态。',
+    response: '本机服务响应无法读取，请刷新核对当前状态。',
+    rejected: '本机服务未能完成请求，请检查后刷新。',
+  };
+  const error = new Error(messages[code] || messages.response);
+  Object.assign(error, { code, status, outcomeUnknown: write && code !== 'rejected' });
+  if (code === 'cancelled') error.name = 'AbortError';
+  return error;
+}
 async function api(path, options = {}) {
-  const response = await fetch(path, {
-    ...options, credentials: 'same-origin',
-    headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
-  });
-  const payload = await response.json();
+  const write = !['GET', 'HEAD'].includes((options.method || 'GET').toUpperCase());
+  let response;
+  try {
+    response = await fetch(path, {
+      ...options, credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+    });
+  } catch (error) {
+    throw requestFailure(error.name === 'AbortError' ? 'cancelled' : error.name === 'TimeoutError' ? 'timeout' : 'network', 0, write);
+  }
+  let payload;
+  try { payload = await response.json(); }
+  catch (error) {
+    throw requestFailure(error.name === 'AbortError' ? 'cancelled' : error.name === 'TimeoutError' ? 'timeout' : 'response', response.status, write);
+  }
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    throw requestFailure('response', response.status, write);
+  }
   if (!response.ok || payload.status === 'error') {
-    const error = new Error(payload.error || `本地服务返回 ${response.status}`);
-    error.status = response.status;
+    const error = requestFailure('rejected', response.status, write);
+    // The protected local API supplies Chinese business errors (including 409
+    // conflicts). Never reflect proxy HTML, exception text, or arbitrary JSON.
+    const message = payload.error;
+    if (typeof message === 'string' && message.length <= 240 && /[\u4e00-\u9fff]/.test(message)
+        && !/[<>/\\{}\[\]\x00-\x1f]/.test(message)
+        && !/[a-z]/i.test(message.replace(/\b(?:API|Key|Windows|JSON|HTTP|Markdown|\d*(?:KB|MB|GB))\b/gi, ''))) {
+      error.message = message;
+    }
     throw error;
   }
   return payload;
+}
+function scrollBehavior() {
+  return window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth';
 }
 function showNotice(message, isError = false) {
   const notice = $('#notice');

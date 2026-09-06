@@ -234,6 +234,10 @@ summary { min-height: 44px; font-size: 14px; }
 .status-badge.is-warning { background: var(--destructive-soft); color: var(--destructive); }
 .notice { top: 88px; background: var(--surface-card); border-radius: 12px; box-shadow: var(--shadow-panel); font-size: 14px; z-index: 19; }
 .notice.is-error, .ai-feedback.is-error, .search-status.is-error, .library-feedback.is-error { background: var(--destructive-soft); color: var(--destructive); }
+.import-result { margin-bottom: 20px; padding: 16px; border: 1px solid var(--border-subtle); border-radius: 12px; background: var(--surface-card); }
+.import-result p { margin: 0 0 10px; }
+.import-result.is-error { border-color: var(--destructive); }
+.drop-zone:focus-within { outline: 3px solid var(--focus-ring); outline-offset: 3px; }
 .warning-item { background: var(--surface-card); border-radius: 8px; }
 .sync-attention, .module-boundary, .ai-coverage-notice { background: var(--warning-soft); color: var(--warning); border-radius: 8px; font-size: 14px; }
 .library-feedback { border-radius: 8px; }

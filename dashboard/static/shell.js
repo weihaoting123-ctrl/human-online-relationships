@@ -15,21 +15,28 @@
   function isEnabled(id) { return modules.find((item) => item.id === id)?.enabled !== false; }
   function navigate(view, updateHash = true) {
     const selected = views.includes(view) ? view : 'catalog';
+    state.interactionEpoch += 1;
     state.currentView = selected;
     views.forEach((id) => { const node = $(`#${id}`); if (node) node.hidden = id !== selected; });
     $('#dashboard').hidden = selected !== 'catalog' || !state.activeBundle;
-    $('#empty-state').hidden = selected !== 'catalog' || Boolean(state.bundles.length);
+    $('#empty-state').hidden = selected !== 'catalog' || !state.catalogLoaded || state.catalogPhase !== 'ready' || Boolean(state.bundles.length);
     document.querySelectorAll('[data-view]').forEach((item) => {
       const active = item.dataset.view === selected;
       item.classList.toggle('is-active', active);
       if (active) item.setAttribute('aria-current', 'page'); else item.removeAttribute('aria-current');
     });
-    if (updateHash && location.hash !== `#${selected}`) history.replaceState(null, '', `#${selected}`);
+    if (!views.includes(view) || !location.hash) history.replaceState(null, '', `#${selected}`);
+    else if (updateHash && location.hash !== `#${selected}`) history.pushState(null, '', `#${selected}`);
     adapters.forEach((adapter, id) => {
       adapter.setActive?.(selected === id);
       if (selected === id) adapter.activate?.();
     });
     document.dispatchEvent(new CustomEvent('archive:view', { detail: { view: selected } }));
+    if (updateHash) focusView();
+  }
+  function focusView() {
+    const title = $(`#${state.currentView} h1`);
+    if (title) { title.tabIndex = -1; title.focus({ preventScroll: true }); }
   }
   function setModules(value) {
     modules = Array.isArray(value) ? value : [];
@@ -60,13 +67,29 @@
   window.navigateWorkspace = navigate; // Existing workspace links remain compatible.
   document.addEventListener('click', (event) => {
     const link = event.target.closest('a[href^="#"]');
+    if (link?.hash === '#main') {
+      event.preventDefault();
+      state.interactionEpoch += 1;
+      $('#main').focus({ preventScroll: true });
+      $('#main').scrollIntoView({ behavior: scrollBehavior(), block: 'start' });
+      return;
+    }
     if (!link || !views.includes(link.hash.slice(1))) return;
     event.preventDefault(); navigate(link.hash.slice(1));
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    if (link.id === 'first-import-link') {
+      $('#import-panel').open = true;
+      $('#chat-file').focus({ preventScroll: true });
+      $('#import-panel').scrollIntoView({ behavior: scrollBehavior(), block: 'start' });
+    } else window.scrollTo({ top: 0, behavior: scrollBehavior() });
   });
-  window.addEventListener('hashchange', () => {
+  function restoreView() {
     const view = location.hash.slice(1);
-    if (views.includes(view)) navigate(view, false);
-  });
+    // popstate and hashchange may describe the same traversal.
+    if (view === state.currentView) return;
+    navigate(view, false);
+    focusView();
+  }
+  window.addEventListener('popstate', restoreView);
+  window.addEventListener('hashchange', restoreView);
   navigate(location.hash.slice(1), false);
 })();

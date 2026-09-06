@@ -163,6 +163,29 @@ class BackupBrowserTests(unittest.TestCase):
         self.expect(self.page.locator('#backup-verify')).to_be_enabled()
         self.assertEqual(self.mutations, [])
 
+    def test_accepted_backup_response_loss_only_reconciles_without_reposting(self):
+        self.page.evaluate('''() => {
+          const originalFetch = window.fetch;
+          window.fetch = async (url, options) => {
+            const response = await originalFetch(url, options);
+            if (String(url) === '/api/backup/run') {
+              throw new TypeError('synthetic response lost after acceptance');
+            }
+            return response;
+          };
+        }''')
+        before = len(self.requests)
+        self.page.locator('#backup-run').click()
+        self.expect(self.page.locator('#backup-status-badge')).to_have_text('正在备份')
+        self.expect(self.page.locator('#backup-feedback')).to_contain_text('没有自动重新提交')
+        self.expect(self.page.locator('#backup-run')).to_be_disabled()
+        self.assertEqual(self.mutations, [('/api/backup/run', {})])
+        for path in ('/api/backup/status', '/api/backup/history'):
+            self.assertTrue(any(url.endswith(path) for url in self.requests[before:]))
+        self.backup['state'] = 'completed'
+        self.expect(self.page.locator('#backup-run')).to_be_enabled(timeout=10000)
+        self.assertEqual(self.mutations, [('/api/backup/run', {})])
+
     def test_writer_lock_busy_allows_manual_retry_without_automatic_resubmission(self):
         self.post_state = 'busy'
         self.page.locator('#backup-run').click()
@@ -198,6 +221,8 @@ class BackupBrowserTests(unittest.TestCase):
         self.assertEqual(self.mutations, [])
 
     def capture(self, name):
+        if os.environ.get('SHE_LOVE_ME_UI_SCREENSHOTS') != '1':
+            return
         self.page.evaluate('() => { document.activeElement?.blur(); window.scrollTo(0, 0); }')
         self.page.screenshot(path=str(fixtures.ARTIFACTS / name), full_page=True)
 
