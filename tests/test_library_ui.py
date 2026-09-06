@@ -56,6 +56,9 @@ class LibraryBrowserTests(unittest.TestCase):
         self.addCleanup(self.context.close)
         self.page = self.context.new_page()
         self.page.set_default_timeout(4000)
+        # CI cold navigation can exceed the short interaction timeout. Keep
+        # interactions strict, but allow normal browser startup/page loading.
+        self.page.set_default_navigation_timeout(30000)
         self.errors, self.requests, self.mutations = [], [], []
         self.no_ai = True
         self.conflict = False
@@ -242,7 +245,10 @@ class LibraryBrowserTests(unittest.TestCase):
         self.expect(self.page.locator('[data-view="settings"]')).to_be_visible()
         self.page.locator('[data-view="settings"]').click()
         media = self.page.locator('[data-module-toggle="media"]')
-        media.uncheck()
+        # This request must be rejected and immediately rolled back to checked.
+        # uncheck() asserts an unchecked final state, racing the correct rollback.
+        self.expect(media).to_be_checked()
+        media.click()
         self.expect(self.page.locator('#module-feedback')).to_contain_text('请先停用语音转写')
         self.expect(media).to_be_checked()
         self.page.locator('[data-module-toggle="voice"]').uncheck()

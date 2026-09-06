@@ -10,10 +10,10 @@
 
 - [x] 仅发布代码、许可文档和合成夹具；检查待发布文件及 Git 历史不含个人数据或凭据。
 - [x] 从干净克隆复验文档入口，记录相关测试通过/跳过/失败，不借用私人部署环境证明可安装。
-- [ ] 核对来源和许可证、`VERSION`、CHANGELOG、标签与 Release 一致。
+- [x] 核对来源和许可证、`VERSION`、CHANGELOG、标签与 Release 一致。
 - [x] 启用 GitHub 私下漏洞报告，核对表单链接和基础分诊标签。
 
-以上按实际结果勾选，证据见 [公开验证记录](docs/release-verification.md) 和 [发布验收 Issue #6](https://github.com/weihaoting123-ctrl/human-online-relationships/issues/6)。版本与 Release 核对在发布后单独完成。
+以上于 2026-09-06 完成，证据见 [公开验证记录](docs/release-verification.md)、[发布验收 Issue #6](https://github.com/weihaoting123-ctrl/human-online-relationships/issues/6) 和 [v0.1.0 Release](https://github.com/weihaoting123-ctrl/human-online-relationships/releases/tag/v0.1.0)。
 
 ## v0.2.0：可复现体验与管理效率（候选，未实现）
 

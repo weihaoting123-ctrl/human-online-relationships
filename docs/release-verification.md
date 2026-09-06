@@ -4,6 +4,8 @@
 
 功能与测试提交：[8f8ec87](https://github.com/weihaoting123-ctrl/human-online-relationships/commit/8f8ec871b9959a719bb3160ec3542af259a9297a)。后续发布文档、管理状态记录不改变此功能代码。
 
+[v0.1.0 已正式发布](https://github.com/weihaoting123-ctrl/human-online-relationships/releases/tag/v0.1.0)，标签指向 `9e77b737672d3b23955b2b42e2a754d73e8bc955`，包含发布前验证记录与管理配置。发布后文档勾选不改写该标签。
+
 ### 已执行验证
 
 | 环境 | Python 合成测试 | JavaScript 合成测试 | 依赖审计 |
@@ -15,6 +17,8 @@
 [云端完整运行结果](https://github.com/weihaoting123-ctrl/human-online-relationships/actions/runs/34037199659)。测试浏览器使用合成接口或合成数据与随机回环端口，不使用私人微信控制台、真实联系人或云模型。
 
 首轮 CI 暴露了 Windows 临时目录短路径与规范路径不一致，以及 UI 刷新后旧节点样式为空的测试问题。修复后重跑通过；未放宽原始资料的边界检查，也没有将空样式当作正确结果。
+
+发布文档提交的再次回归中，Windows 出现两项偶发测试错误：冷启动页面超过控件共用的 4 秒超时；以及拒绝停用模块后立即回滚，与测试 `uncheck()` 自带的最终未选中断言冲突。发布后仅维护测试夹具：导航单独使用 30 秒超时，拒绝操作通过点击触发后核对错误和恢复状态。v0.1.0 标签保留原样；最新维护结果以 main 的 CI 为准。
 
 ### 发布与管理边界
 
