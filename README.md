@@ -89,6 +89,7 @@ node --test tests/test_catalog.cjs
 
 - 当前公开基线版本由 [VERSION](VERSION) 管理，变更记录见 [CHANGELOG](CHANGELOG.md)。
 - 功能边界与后续迭代见 [ROADMAP](ROADMAP.md)，提交、PR、标签与里程碑约定见 [CONTRIBUTING](CONTRIBUTING.md)。
+- 深度解构、模块边界及真实平台限制见 [项目审查](docs/project-decomposition.md)；分批需求、依赖与验收见 [需求池](BACKLOG.md)。候选版本需确认并实现，不等于已经发布。
 - Issues 使用问题/功能模板；按 `type:*`、`area:*`、`priority:*` 分类。未完成的想法不得写成已实现功能。
 - 默认分支 `main`；开发使用 `codex/<topic>` 或 `feature/<topic>`，通过 PR、测试和隐私检查进入版本。
 - [产品思路](docs/relationship-product.md)、[模块与数据库](.agents/skills/she-love-me/references/local-architecture.md)、[时间线约束](.agents/skills/she-love-me/references/relationship-timeline.md)、[UI 设计](docs/apple-ui-design.md)。
