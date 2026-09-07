@@ -19,6 +19,7 @@
 
 ## Codex Guidance
 
+- Project maintenance follows `docs/project-stewardship.md`: the maintainer delegates routine scope, design, implementation, review, and release decisions to the agent. Choose and record a bounded plan without repeatedly asking the user to select technical options. This does not disable privacy, original-data, account-identity, spending, or verification safeguards.
 - When a user asks to analyze chat logs with this project, prefer the repo skill `she-love-me`.
 - Keep the working directory at the repository root when following the skill workflow.
 - Keep generated or sensitive outputs under `vendor/`, `data/`, and `reports/`; do not move personal chat data into tracked files.

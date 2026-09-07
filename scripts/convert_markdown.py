@@ -4,9 +4,7 @@ import argparse
 import json
 import re
 import sys
-from pathlib import Path
-
-from contact_bundle import resolve_bundle_paths
+from import_store import ImportBusyError, import_error_payload, save_import_bundle, validate_import_path
 from message_normalizer import normalize_payload
 
 
@@ -51,28 +49,30 @@ def main():
     parser.add_argument("--output-dir", default="data/contacts", help="联系人导出根目录")
     args = parser.parse_args()
 
-    source = Path(args.input)
+    source = validate_import_path(args.input)
     payload = normalize_payload({
         "source": "markdown",
         "contact_username": args.contact_id or args.contact,
         "contact_display": args.contact,
         "messages": parse_markdown(source.read_text(encoding="utf-8-sig"), args.my_name),
     })
-    bundle = resolve_bundle_paths(
-        args.contact, args.contact_id or args.contact, output_dir=args.output_dir
+    result = save_import_bundle(
+        payload, contact=args.contact, contact_id=args.contact_id, output_dir=args.output_dir,
+        identity_context={"source": "markdown", "request": {
+            "contact": args.contact, "contact_id": args.contact_id, "my_name": args.my_name,
+        }},
     )
-    payload["bundle_dir"] = bundle["bundle_dir"]
-    Path(bundle["bundle_dir"]).mkdir(parents=True, exist_ok=True)
-    Path(bundle["messages_path"]).write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    payload, bundle = result["payload"], result["bundle"]
     print(json.dumps({
         "status": "ok", "source": "markdown", "total": payload["total"],
         "bundle_dir": bundle["bundle_dir"], "messages_path": bundle["messages_path"],
+        "created": result["created"], "reused": result["reused"],
     }, ensure_ascii=False))
 
 
 if __name__ == "__main__":
     try:
         main()
-    except (OSError, ValueError) as exc:
-        print(json.dumps({"status": "error", "error": str(exc)}, ensure_ascii=False), file=sys.stderr)
+    except (OSError, ValueError, TypeError, AttributeError, KeyError, RecursionError, ImportBusyError) as exc:
+        print(json.dumps(import_error_payload(exc), ensure_ascii=False), file=sys.stderr)
         sys.exit(1)

@@ -34,7 +34,8 @@ from urllib.parse import unquote, urlparse
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS_DIR = REPO_ROOT / "scripts"
 STATIC_DIR = Path(__file__).resolve().parent / "static"
-DATA_DIR = Path(os.environ.get("SHE_LOVE_ME_DATA_DIR", REPO_ROOT / "data")).resolve()
+# Keep configured reparse/symlink ancestors visible to import validation.
+DATA_DIR = Path(os.environ.get("SHE_LOVE_ME_DATA_DIR", REPO_ROOT / "data")).absolute()
 _CONFIGURED_DATA_DIR = DATA_DIR
 CONTACTS_DIR = DATA_DIR / "contacts"
 RAW_IMPORT_DIR = DATA_DIR / "raw" / "dashboard"
@@ -146,6 +147,10 @@ from convert_markdown import parse_markdown  # noqa: E402
 from convert_weflow import convert_payload as convert_weflow_payload  # noqa: E402
 from convert_weflow_cli import convert_payload as convert_weflow_cli_payload  # noqa: E402
 from message_normalizer import normalize_payload  # noqa: E402
+from external_chat_import import observed_owner_usernames  # noqa: E402
+from import_store import (exclusive_import_lock, fingerprint_import,
+                          sync_import_directory, validate_import_path,
+                          validated_private_root)  # noqa: E402
 from dashboard.search import search_messages  # noqa: E402
 from dashboard import analysis as scoped_ai  # noqa: E402
 from dashboard.library import (LibraryConflictError, LibraryNotFoundError,
@@ -177,46 +182,9 @@ def _inside(path: Path, parent: Path) -> bool:
 
 @contextmanager
 def _exclusive_import_lock():
-    """Use an OS-owned byte lock so separate local servers cannot race."""
-
-    lock_path = CONTACTS_DIR.parent / "private" / "dashboard-import.lock"
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
-    handle = lock_path.open("a+b")
-    locked = False
-    try:
-        handle.seek(0, os.SEEK_END)
-        if handle.tell() == 0:
-            handle.write(b"\0")
-            handle.flush()
-        handle.seek(0)
-        if os.name == "nt":
-            import msvcrt
-
-            try:
-                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
-            except OSError as exc:
-                raise RuntimeError("另一个本地导入正在运行") from exc
-        else:
-            import fcntl
-
-            try:
-                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except OSError as exc:
-                raise RuntimeError("另一个本地导入正在运行") from exc
-        locked = True
+    """Compatibility entrypoint sharing the offline converters' OS lock."""
+    with exclusive_import_lock(CONTACTS_DIR):
         yield
-    finally:
-        if locked:
-            handle.seek(0)
-            if os.name == "nt":
-                import msvcrt
-
-                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
-            else:
-                import fcntl
-
-                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
-        handle.close()
 
 
 def resolve_bundle(bundle_id: str) -> Path:
@@ -744,6 +712,55 @@ def archive_status():
     return result
 
 
+def _source_import_identity(data):
+    """Capture source identity before adapters or display overrides discard it."""
+    observed = observed_owner_usernames(data)
+    if not isinstance(data, dict):
+        return {"observed_owner_usernames": observed}
+    identity = {key: data.get(key) for key in (
+        "source", "contact_username", "contact_display", "own_wxid", "my_display",
+    )}
+    for container, fields in (("meta", ("ownerId",)),
+                              ("session", ("wxid", "remark", "nickname"))):
+        value = data.get(container)
+        identity[container] = {key: value.get(key) for key in fields} if isinstance(value, dict) else {}
+    identity["observed_owner_usernames"] = observed
+    return identity
+
+
+def _verified_web_import(existing, import_fingerprint, identity):
+    """A manifest claim alone is insufficient: verify the current stored bytes."""
+    if existing.name.startswith("."):
+        return False
+    try:
+        validate_import_path(existing)
+        if getattr(existing.lstat(), "st_file_attributes", 0) & 2:
+            return False
+        manifest_path = validate_import_path(existing / "dashboard_manifest.json")
+        messages_path = validate_import_path(existing / "messages.json")
+        if not existing.is_dir() or not manifest_path.is_file() or not messages_path.is_file():
+            return False
+        manifest = _read_json(manifest_path, {})
+        if not isinstance(manifest, dict) or manifest.get("import_fingerprint_version") != 2:
+            return False
+        if manifest.get("import_identity") != identity or manifest.get("import_fingerprint") != import_fingerprint:
+            return False
+        raw = messages_path.read_bytes()
+        if manifest.get("messages_sha256") != hashlib.sha256(raw).hexdigest():
+            return False
+        return fingerprint_import(json.loads(raw), identity_context=identity) == import_fingerprint
+    except (OSError, ValueError, TypeError, UnicodeError, RecursionError):
+        # Damaged/legacy material stays untouched; it is not a valid reuse hit.
+        return False
+
+
+def _write_web_import_file(path, content):
+    with path.open("xb") as handle:
+        handle.write(content)
+        handle.flush()
+        os.fsync(handle.fileno())
+
+
 def _import_payload_locked(request):
     kind = str(request.get("kind") or "auto").strip().lower()
     content = request.get("content")
@@ -757,6 +774,7 @@ def _import_payload_locked(request):
         raise ValueError("文件超过 50 MB 限制")
 
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    source_identity = {}
     if kind == "markdown":
         if not contact:
             raise ValueError("Markdown 导入需要填写对方称呼")
@@ -771,6 +789,7 @@ def _import_payload_locked(request):
             data = json.loads(content)
         except json.JSONDecodeError as exc:
             raise ValueError(f"JSON 格式错误：第 {exc.lineno} 行") from exc
+        source_identity = _source_import_identity(data)
         if kind == "auto":
             kind = _detect_json_kind(data)
         if kind == "normalized-json":
@@ -786,7 +805,6 @@ def _import_payload_locked(request):
             )
         elif kind == "weflow-json":
             payload, _ = convert_weflow_payload(data)
-            payload = normalize_payload(payload, drop_invalid=True)
             contact = contact or payload.get("contact_display") or "对方"
             payload["contact_display"] = contact
         elif kind == "ciphertalk":
@@ -803,23 +821,21 @@ def _import_payload_locked(request):
     if not messages:
         raise ValueError("没有找到可分析的双方消息")
     contact = contact or payload.get("contact_display") or "对方"
-    import_fingerprint = hashlib.sha256(json.dumps({
-        "contact_display": contact,
-        "my_display": payload.get("my_display") or my_name,
-        "messages": messages,
-    }, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+    payload["contact_display"] = contact
+    identity = {
+        "entrypoint": "dashboard", "kind": kind,
+        "request": {"contact": str(request.get("contact") or "").strip(),
+                    "contact_id": str(request.get("contact_id") or "").strip(),
+                    "my_name": my_name},
+        "source": source_identity,
+    }
+    import_fingerprint = fingerprint_import(payload, identity_context=identity)
 
     # Exact re-imports are idempotent.  This is checked while holding the
     # process-wide import lock, before creating either a raw archive or bundle.
     if CONTACTS_DIR.is_dir():
         for existing in CONTACTS_DIR.iterdir():
-            if not existing.is_dir() or not (existing / "messages.json").is_file():
-                continue
-            manifest = _read_json(existing / "dashboard_manifest.json", {})
-            if isinstance(manifest, dict) and secrets.compare_digest(
-                str(manifest.get("import_fingerprint") or ""),
-                import_fingerprint,
-            ):
+            if _verified_web_import(existing, import_fingerprint, identity):
                 return bundle_detail(existing.name)
 
     bundle_paths = resolve_bundle_paths(
@@ -827,14 +843,14 @@ def _import_payload_locked(request):
         contact_id or contact,
         output_dir=str(CONTACTS_DIR),
     )
-    if Path(bundle_paths["bundle_dir"]).exists():
+    if os.path.lexists(bundle_paths["bundle_dir"]):
         bundle_paths = resolve_bundle_paths(
             contact,
             f"{contact_id or contact}-{stamp}-{secrets.token_hex(4)}",
             output_dir=str(CONTACTS_DIR),
         )
     bundle = Path(bundle_paths["bundle_dir"])
-    while bundle.exists():
+    while os.path.lexists(bundle):
         bundle_paths = resolve_bundle_paths(
             contact,
             f"{contact_id or contact}-{stamp}-{secrets.token_hex(8)}",
@@ -842,44 +858,60 @@ def _import_payload_locked(request):
         )
         bundle = Path(bundle_paths["bundle_dir"])
 
-    CONTACTS_DIR.mkdir(parents=True, exist_ok=True)
+    private_root = validated_private_root(CONTACTS_DIR)
+    validate_import_path(RAW_IMPORT_DIR)
     RAW_IMPORT_DIR.mkdir(parents=True, exist_ok=True)
     raw_path = RAW_IMPORT_DIR / f"{stamp}_{secrets.token_hex(8)}_{filename}"
     raw_fd, raw_temp_name = tempfile.mkstemp(prefix=".dashboard-raw-", suffix=".tmp", dir=RAW_IMPORT_DIR)
     os.close(raw_fd)
     raw_temp = Path(raw_temp_name)
-    staged_bundle = Path(tempfile.mkdtemp(prefix=".dashboard-import-", dir=CONTACTS_DIR))
+    staged_bundle = None
     raw_committed = False
     bundle_committed = False
 
-    payload["contact_display"] = contact
     payload["bundle_dir"] = str(bundle)
     try:
-        raw_temp.write_text(content, encoding="utf-8")
+        staged_bundle = Path(tempfile.mkdtemp(prefix=".dashboard-import-", dir=private_root))
+        with raw_temp.open("wb") as handle:
+            handle.write(content.encode("utf-8"))
+            handle.flush()
+            os.fsync(handle.fileno())
         messages_path = staged_bundle / "messages.json"
-        messages_path.write_text(
-            json.dumps(payload, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
+        message_bytes = json.dumps(payload, ensure_ascii=False, indent=2, allow_nan=False).encode("utf-8")
+        _write_web_import_file(messages_path, message_bytes)
         run_script(
             "stats_analyzer.py",
             ["--input", str(messages_path), "--output", str(staged_bundle / "stats.json")],
         )
-        (staged_bundle / "dashboard_manifest.json").write_text(json.dumps({
+        # Windows _commit requires a writable handle; this is our new staged file.
+        with (staged_bundle / "stats.json").open("r+b") as handle:
+            os.fsync(handle.fileno())
+        _write_web_import_file(staged_bundle / "dashboard_manifest.json", json.dumps({
             "contact": contact,
             "source": payload.get("source", kind),
             "message_count": len(messages),
             "imported_at": datetime.now().isoformat(timespec="seconds"),
             "import_fingerprint": import_fingerprint,
-        }, ensure_ascii=False, indent=2), encoding="utf-8")
+            "import_fingerprint_version": 2,
+            "import_identity": identity,
+            "messages_sha256": hashlib.sha256(message_bytes).hexdigest(),
+        }, ensure_ascii=False, indent=2, allow_nan=False).encode("utf-8"))
 
         # Both names are unique and chosen while holding _IMPORT_LOCK. Publish
         # only after all processing succeeds; retries therefore create a safe
         # new version instead of overwriting an earlier import.
-        raw_temp.replace(raw_path)
+        sync_import_directory(staged_bundle)
+        validate_import_path(bundle)
+        validate_import_path(raw_path)
+        if os.path.lexists(bundle) or os.path.lexists(raw_path):
+            raise RuntimeError("导入目标已被占用，请检查本机导入状态")
+        raw_temp.rename(raw_path)
         raw_committed = True
-        staged_bundle.replace(bundle)
+        staged_bundle.rename(bundle)
         bundle_committed = True
+        sync_import_directory(CONTACTS_DIR)
+        sync_import_directory(private_root)
+        sync_import_directory(RAW_IMPORT_DIR)
         return bundle_detail(bundle.name)
     except Exception:
         if raw_committed and not bundle_committed:
@@ -887,7 +919,7 @@ def _import_payload_locked(request):
         raise
     finally:
         raw_temp.unlink(missing_ok=True)
-        if staged_bundle.exists():
+        if staged_bundle is not None and staged_bundle.exists():
             shutil.rmtree(staged_bundle, ignore_errors=True)
 
 

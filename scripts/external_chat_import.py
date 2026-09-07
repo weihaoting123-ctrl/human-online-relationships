@@ -1,9 +1,6 @@
 """Shared helpers for importing JSON produced by external chat exporters."""
 
-import json
-from pathlib import Path
-
-from contact_bundle import resolve_bundle_paths
+from import_store import save_import_bundle
 from message_normalizer import normalize_payload
 
 
@@ -70,12 +67,28 @@ def content_or_placeholder(content, message_type):
     return text or PLACEHOLDERS.get(message_type, "")
 
 
-def write_contact_bundle(payload, contact, contact_id, output_dir):
+def observed_owner_usernames(data):
+    """Keep explicit outgoing sender identities without choosing an account."""
+    messages = data.get("messages") if isinstance(data, dict) else data
+    if not isinstance(messages, list):
+        return []
+    return sorted({raw["senderUsername"] for raw in messages
+                   if isinstance(raw, dict) and raw.get("isSend") in (1, True, "1")
+                   and isinstance(raw.get("senderUsername"), str) and raw["senderUsername"]})
+
+
+def write_contact_bundle(payload, contact, contact_id, output_dir, *, identity_context=None):
     normalized = normalize_payload(payload, drop_invalid=True)
-    bundle = resolve_bundle_paths(contact, contact_id or contact, output_dir=output_dir)
-    normalized["bundle_dir"] = bundle["bundle_dir"]
-    Path(bundle["bundle_dir"]).mkdir(parents=True, exist_ok=True)
-    Path(bundle["messages_path"]).write_text(
-        json.dumps(normalized, ensure_ascii=False, indent=2), encoding="utf-8"
+    if identity_context is None:
+        identity_context = {
+            "source": payload.get("source"),
+            "request": {"contact": contact, "contact_id": contact_id},
+            "source_identity": {key: payload.get(key) for key in (
+                "contact_username", "contact_display", "own_wxid",
+            )},
+        }
+    result = save_import_bundle(
+        normalized, contact=contact, contact_id=contact_id, output_dir=output_dir,
+        identity_context=identity_context,
     )
-    return normalized, bundle
+    return result["payload"], {**result["bundle"], "created": result["created"], "reused": result["reused"]}
