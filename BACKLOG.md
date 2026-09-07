@@ -1,6 +1,6 @@
 # 项目需求池
 
-需求池修订：R2 · 2026-09-07。初始审查基线 `94180d0` / 软件版本 `0.1.0`。R2 记录首轮实施与验收状态；需求文档修订不是软件 Release。
+需求池修订：R3 · 2026-09-07。初始审查基线 `94180d0` / 软件版本 `0.1.0`。R2 记录首轮实施与验收，R3 选择 DATA-01 第一阶段；需求文档修订不是软件 Release。
 
 目标：把本机聊天档案变成可检索、可回顾、范围明确的线上关系时间线。原始数据只读、云分析按次确认；不推断真实动机、不绘制未经确认的人际身份网络。
 
@@ -10,12 +10,13 @@
 
 - 稳定 ID 不随标题或版本变化；一个需求只保留一个主 Issue，拆分任务引用父需求，不重复创建。
 - 状态依次为：候选 → 已确认 → 实现中 → 待验收 → 已发布；暂缓需说明依赖，不能删掉历史假装从未计划。
-- A 批 UX-01 至 UX-05 已确认并进入 v0.1.1 验收，其余新增项仍为候选。已有 #7–#10 保持开放及原里程碑；以下版本建议未自动移动它们。
+- A 批 UX-01 至 UX-05 已发布为 v0.1.1；DATA-01 第一阶段选定为 v0.1.2，其余新增项仍为候选。已有 #7–#10 保持开放及原里程碑；以下版本建议未自动移动它们。
 - 优先级沿用 CONTRIBUTING：P1 是核心阻断/数据保护门槛；P2 是常规缺陷与迭代。没有绕行方式的程度未经验证时，不随意标为 P1。
 - 验收使用完全虚构材料。没有私有数据、真实凭证或真实微信也应能验证通用功能。
 - 每次交付更新“实际版本 / PR / 测试证据”，不能把候选版本当作完成记录。
+- 按 [项目托管规范](docs/project-stewardship.md)，后续常规范围确认由受托代理逐批判断并记录，不再重复要求维护者选择技术方案；仍保留数据授权、实机验收与发布门槛。
 
-## A：先修好首次使用闭环（v0.1.1，本机验收通过）
+## A：先修好首次使用闭环（v0.1.1，已发布）
 
 [设计规范](docs/superpowers/specs/2026-09-06-v011-first-use-design.md) · [测试与发布计划](docs/superpowers/plans/2026-09-06-v011-first-use.md) · [审查记录](docs/reviews/v0.1.1-review.md) · [迭代里程碑](https://github.com/weihaoting123-ctrl/human-online-relationships/milestone/3)
 
@@ -47,6 +48,14 @@
 | SRC-01 | 兼容入口与知识文档收敛 / P1 门槛 | 活跃/离线兼容/已停用来源清楚分开；入口说明一致；旧客户端先独立安全验收再接入作业；不索取聊天窗口凭据 | 公开只记录建设目标；凭据与潜在漏洞细节保持非公开 |
 
 这一批不是单个巨型 PR。先 PLAT-01、DATA-01、IMP-01，再重组 UI 和演示；批量管理与人工无障碍分别验收。是否全部进入 v0.2.0，在首轮范围确认后再调整 GitHub 里程碑。
+
+### DATA-01 第一阶段：v0.1.2
+
+受托代理选择先统一四个离线转换器的不可覆盖保存，并加强网页身份/完整性复用与共享锁。实现与合成验收按 [设计](docs/superpowers/specs/2026-09-07-v012-import-storage-design.md) 和 [计划](docs/superpowers/plans/2026-09-07-v012-import-storage.md) 推进；行为边界见 [导入保存说明](docs/import-storage.md)。
+
+本阶段追踪：[子任务 #22](https://github.com/weihaoting123-ctrl/human-online-relationships/issues/22) · [v0.1.2 里程碑](https://github.com/weihaoting123-ctrl/human-online-relationships/milestone/4)。
+
+本阶段不接管旧微信/QQ 在线提取器、显式文件输出、原生同步检查点，也不实现预检向导。主需求 [#15](https://github.com/weihaoting123-ctrl/human-online-relationships/issues/15) 保持开放；DATA-01 与 IMP-01 不因这个补丁全部关闭。UI 工作区重组仍按依赖后续独立迭代。
 
 ## C：处理流程与数据覆盖（候选 v0.3.0）
 
@@ -98,6 +107,7 @@
 | 项目 | 状态 | 证据 |
 | --- | --- | --- |
 | 公开软件 v0.1.0 | 已发布 | [Release](https://github.com/weihaoting123-ctrl/human-online-relationships/releases/tag/v0.1.0) |
-| 本次解构与需求池 R1 → R2 | A 批已确认；后续保持候选 | 本文件与 [解构报告](docs/project-decomposition.md) |
+| 解构与需求池 R1 → R3 | A 批已发布；DATA-01 第一阶段已确认 | 本文件与 [解构报告](docs/project-decomposition.md) |
 | v0.1.1 | 代码与独立审查、本机完整回归已完成；远端发布状态以 Release 为准 | [审查记录](docs/reviews/v0.1.1-review.md) · [Release](https://github.com/weihaoting123-ctrl/human-online-relationships/releases/tag/v0.1.1) |
-| B–D 后续候选 | 未实现、未发布 | 不以需求单、草案 PR 或旧 CI 代替完成证据 |
+| v0.1.2 / DATA-01 第一阶段 | 代码、独立审查与本机回归完成；远端发布以 Release 为准 | [审查记录](docs/reviews/v0.1.2-review.md) · [Release](https://github.com/weihaoting123-ctrl/human-online-relationships/releases/tag/v0.1.2) |
+| B–D 剩余需求 | 未实现、未发布 | 不以需求单、草案 PR 或旧 CI 代替完成证据 |

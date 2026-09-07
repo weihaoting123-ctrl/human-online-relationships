@@ -3,9 +3,8 @@
 import argparse
 import json
 import sys
-from pathlib import Path
-
-from contact_bundle import resolve_bundle_paths
+from external_chat_import import observed_owner_usernames
+from import_store import ImportBusyError, import_error_payload, save_import_bundle, validate_import_path
 from message_normalizer import normalize_payload
 
 
@@ -29,6 +28,22 @@ def first_value(source, *keys):
         if value not in (None, ""):
             return value
     return None
+
+
+def import_identity(data, own_wxid=None, display_name=None, wxid=None):
+    session = data.get("session") or {}
+    detected_own = next((raw.get("senderUsername") for raw in data.get("messages", [])
+                         if isinstance(raw, dict) and raw.get("isSend") in (1, True, "1")
+                         and raw.get("senderUsername") != (wxid or session.get("wxid"))), None)
+    return {
+        "source": "weflow",
+        "request": {"own_wxid": own_wxid, "display_name": display_name, "wxid": wxid},
+        "source_identity": {
+            "session": {key: session.get(key) for key in ("wxid", "nickname", "remark")},
+            "detected_own_wxid": detected_own,
+            "observed_owner_usernames": observed_owner_usernames(data),
+        },
+    }
 
 
 def convert_payload(data, own_wxid=None, display_name=None, wxid=None):
@@ -128,36 +143,37 @@ def main():
     parser.add_argument("--wxid", help="覆盖联系人 wxid")
     args = parser.parse_args()
 
-    with open(args.input, encoding="utf-8-sig") as handle:
+    with open(validate_import_path(args.input), encoding="utf-8-sig") as handle:
         data = json.load(handle)
+    identity_context = import_identity(data, args.own_wxid, args.display_name, args.wxid)
     payload, emoji_records = convert_payload(data, args.own_wxid, args.display_name, args.wxid)
-    bundle = resolve_bundle_paths(
-        payload["contact_display"], payload["contact_username"], output_dir=args.output_dir
-    )
-    payload.update({"bundle_dir": bundle["bundle_dir"], "emoji_catalog_file": "emojis.json"})
+    payload["emoji_catalog_file"] = "emojis.json"
     emoji_payload = {
         "contact_username": payload["contact_username"],
         "contact_display": payload["contact_display"],
-        "bundle_dir": bundle["bundle_dir"],
         "total_messages": sum(1 for item in payload["messages"] if item["type"] == "emoji"),
         "unique_emojis": len(emoji_records),
         "emoji_records": sorted(emoji_records.values(), key=lambda item: str(item["emoji_id"])),
     }
 
-    Path(bundle["bundle_dir"]).mkdir(parents=True, exist_ok=True)
-    Path(bundle["messages_path"]).write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    Path(bundle["emojis_path"]).write_text(json.dumps(emoji_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    result = save_import_bundle(
+        payload, contact=payload["contact_display"], contact_id=payload["contact_username"],
+        output_dir=args.output_dir, identity_context=identity_context,
+        sidecars={"emojis.json": emoji_payload},
+    )
+    payload, bundle = result["payload"], result["bundle"]
     print(json.dumps({
         "status": "ok", "source": "weflow", "total": payload["total"],
         "dropped": payload["normalization"]["dropped_messages"],
         "bundle_dir": bundle["bundle_dir"], "messages_path": bundle["messages_path"],
         "emojis_path": bundle["emojis_path"],
+        "created": result["created"], "reused": result["reused"],
     }, ensure_ascii=False))
 
 
 if __name__ == "__main__":
     try:
         main()
-    except (OSError, ValueError, json.JSONDecodeError) as exc:
-        print(json.dumps({"status": "error", "error": str(exc)}, ensure_ascii=False), file=sys.stderr)
+    except (OSError, ValueError, TypeError, AttributeError, KeyError, OverflowError, RecursionError, ImportBusyError) as exc:
+        print(json.dumps(import_error_payload(exc), ensure_ascii=False), file=sys.stderr)
         sys.exit(1)

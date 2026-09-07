@@ -8,9 +8,11 @@ from external_chat_import import (
     content_or_placeholder,
     load_message_array,
     normalize_external_type,
+    observed_owner_usernames,
     write_contact_bundle,
 )
 from message_merge import normalize_source_partition
+from import_store import ImportBusyError, import_error_payload, validate_import_path
 
 
 if sys.platform == "win32":
@@ -101,22 +103,28 @@ def main():
     parser.add_argument("--output-dir", default="data/contacts", help="联系人导出根目录")
     args = parser.parse_args()
 
-    with open(args.input, encoding="utf-8-sig") as handle:
+    with open(validate_import_path(args.input), encoding="utf-8-sig") as handle:
         data = json.load(handle)
     payload = convert_payload(data, args.contact, args.contact_id, args.own_wxid)
     normalized, bundle = write_contact_bundle(
-        payload, args.contact, args.contact_id, args.output_dir
+        payload, args.contact, args.contact_id, args.output_dir,
+        identity_context={
+            "source": "weflow-cli",
+            "request": {"contact": args.contact, "contact_id": args.contact_id, "own_wxid": args.own_wxid},
+            "source_identity": {"observed_owner_usernames": observed_owner_usernames(data)},
+        },
     )
     print(json.dumps({
         "status": "ok", "source": "weflow-cli", "total": normalized["total"],
         "dropped": normalized["normalization"]["dropped_messages"],
         "bundle_dir": bundle["bundle_dir"], "messages_path": bundle["messages_path"],
+        "created": bundle["created"], "reused": bundle["reused"],
     }, ensure_ascii=False))
 
 
 if __name__ == "__main__":
     try:
         main()
-    except (OSError, ValueError, json.JSONDecodeError) as exc:
-        print(json.dumps({"status": "error", "error": str(exc)}, ensure_ascii=False), file=sys.stderr)
+    except (OSError, ValueError, TypeError, AttributeError, KeyError, OverflowError, RecursionError, ImportBusyError) as exc:
+        print(json.dumps(import_error_payload(exc), ensure_ascii=False), file=sys.stderr)
         sys.exit(1)

@@ -10,6 +10,7 @@ from external_chat_import import (
     normalize_external_type,
     write_contact_bundle,
 )
+from import_store import ImportBusyError, import_error_payload, validate_import_path
 
 
 if sys.platform == "win32":
@@ -70,22 +71,28 @@ def main():
     parser.add_argument("--output-dir", default="data/contacts", help="联系人导出根目录")
     args = parser.parse_args()
 
-    with open(args.input, encoding="utf-8-sig") as handle:
+    with open(validate_import_path(args.input), encoding="utf-8-sig") as handle:
         data = json.load(handle)
+    meta = data.get("meta") if isinstance(data, dict) else None
+    identity_context = {
+        "source": "ciphertalk", "request": {"contact": args.contact, "contact_id": args.contact_id},
+        "source_identity": {"owner_id": meta.get("ownerId") if isinstance(meta, dict) else None},
+    }
     payload = convert_payload(data, args.contact, args.contact_id)
     normalized, bundle = write_contact_bundle(
-        payload, args.contact, args.contact_id, args.output_dir
+        payload, args.contact, args.contact_id, args.output_dir, identity_context=identity_context,
     )
     print(json.dumps({
         "status": "ok", "source": "ciphertalk", "total": normalized["total"],
         "dropped": normalized["normalization"]["dropped_messages"],
         "bundle_dir": bundle["bundle_dir"], "messages_path": bundle["messages_path"],
+        "created": bundle["created"], "reused": bundle["reused"],
     }, ensure_ascii=False))
 
 
 if __name__ == "__main__":
     try:
         main()
-    except (OSError, ValueError, json.JSONDecodeError) as exc:
-        print(json.dumps({"status": "error", "error": str(exc)}, ensure_ascii=False), file=sys.stderr)
+    except (OSError, ValueError, TypeError, AttributeError, KeyError, OverflowError, RecursionError, ImportBusyError) as exc:
+        print(json.dumps(import_error_payload(exc), ensure_ascii=False), file=sys.stderr)
         sys.exit(1)

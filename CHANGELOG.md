@@ -6,6 +6,21 @@
 
 下一版本候选见 [ROADMAP](ROADMAP.md)。候选不代表已经实现，也不是发布日期承诺。
 
+## 0.1.2 — 2026-09-07 · 离线导入保存安全
+
+DATA-01 第一阶段，追踪 [#22](https://github.com/weihaoting123-ctrl/human-online-relationships/issues/22)；发布状态以 [Release](https://github.com/weihaoting123-ctrl/human-online-relationships/releases/tag/v0.1.2) 为准，证据见 [审查记录](docs/reviews/v0.1.2-review.md)。
+
+- 四个离线转换入口统一完整暂存、不可覆盖的新包发布和核验复用；保留原 CLI 参数和成功字段，增加 `created/reused` 标记。
+- 同材料复用前核对明确来源/联系人/账号/转换选项、完整文件集合、摘要和实际内容；新材料另存，旧包及已有分析、报告保持不变。
+- 消息与 WeFlow 表情清单一起封存，保留真实重复记录及原有有效/拒绝统计；错误只返回固定说明，不回显输入、路径或 traceback。
+- 网页采用 v2 身份清单和消息完整性核验，与离线入口共用进程锁；暂存移出联系人发现范围，保留网页线程串行和原始文件失败回滚。
+- 覆盖 Windows 目录联接、隐藏属性、大小写文件别名，以及中断、并发、损坏材料和发布后响应失败的合成回归；补测试子进程就绪超时。
+- 记录受托维护的范围选择、评审、发布和隐私保护规则；需求池修订 R3，父需求 #15 保持开放。
+
+兼容取舍：旧网页 v1 清单不自动猜测升级，首次重新导入可能产生新包；网页与 CLI 不保证跨入口复用。旧包不迁移、不删除。共同锁只约束接入的协作入口，不是防任意外部程序或断电的数据保护保证。
+
+本轮不改原生同步检查点、显式合并、旧微信/QQ 在线提取器、显式文件输出、备份和定时任务；不包含导入预检向导或 UI 工作区重组，不自动升级私人部署。详见 [导入保存契约](docs/import-storage.md)。
+
 ## 0.1.1 — 2026-09-07 · 首次使用闭环
 
 实际发布状态以对应 [Release](https://github.com/weihaoting123-ctrl/human-online-relationships/releases/tag/v0.1.1) 为准；审查和验证范围见 [review 记录](docs/reviews/v0.1.1-review.md)。
