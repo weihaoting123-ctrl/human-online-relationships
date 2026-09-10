@@ -248,6 +248,7 @@ function initializeCatalog() {
     state.interactionEpoch += 1;
     state.loadSequence += 1;
     window.RelationshipTimeline?.clear($('#relationship-timeline'));
+    window.ChatHeatmap?.clear($('#chat-heatmap'));
     state.activeBundle = null;
     $('#dashboard').hidden = true;
     $('#dashboard').setAttribute('aria-busy', 'false');
@@ -574,6 +575,7 @@ function renderBundle(bundle) {
   $('#case-title').textContent = displayName(bundle);
   const range = bundle.date_range?.join(' → ') || bundle.preview?.date_range?.join(' → ') || '时间范围待统计';
   $('#case-meta').textContent = `${number(bundle.message_count)} 条消息 · ${range} · ${bundle.source}`;
+  window.ChatHeatmap?.mount($('#chat-heatmap'), bundle.id);
   window.RelationshipTimeline?.render($('#relationship-timeline'), {
     local: bundle.relationship_timeline, mode: 'detail', label: displayName(bundle),
     onSelectRange: window.AiWorkspace ? (dateFrom, dateTo) => {
@@ -605,6 +607,7 @@ async function loadBundle(bundleId, reveal = false) {
   const epoch = state.interactionEpoch;
   const sequence = ++state.loadSequence;
   window.RelationshipTimeline?.clear($('#relationship-timeline'));
+  window.ChatHeatmap?.clear($('#chat-heatmap'));
   $('#dashboard').setAttribute('aria-busy', 'true');
   showNotice('正在加载会话统计…');
   try {
@@ -646,6 +649,9 @@ async function loadState(reloadActive = false) {
   state.catalogLoaded = true;
   state.catalogPhase = 'ready';
   state.bundles = payload.bundles || [];
+  if (state.activeBundle && !state.bundles.some(item => item.id === state.activeBundle.id)) {
+    window.ChatHeatmap?.clear($('#chat-heatmap'));
+  }
   window.LibraryWorkspace?.setBundles(state.bundles);
   window.AiWorkspace?.setBundles(state.bundles);
   renderEnvironment(payload);
