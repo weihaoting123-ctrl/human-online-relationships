@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>人类线上关系可视化</title>
-<link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/app.css"><link rel="stylesheet" href="/analysis-ui.css"><link rel="stylesheet" href="/backup-ui.css"><link rel="stylesheet" href="/library-ui.css"><link rel="stylesheet" href="/relationship-timeline.css"><link rel="stylesheet" href="/apple-ui.css">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/app.css"><link rel="stylesheet" href="/analysis-ui.css"><link rel="stylesheet" href="/backup-ui.css"><link rel="stylesheet" href="/library-ui.css"><link rel="stylesheet" href="/relationship-timeline.css"><link rel="stylesheet" href="/chat-heatmap.css"><link rel="stylesheet" href="/apple-ui.css">
 </head>
 <body>
 <a class="skip-link" href="#main">跳到主要内容</a>
@@ -57,6 +57,7 @@
 <section id="dashboard" class="detail-card" hidden aria-labelledby="case-title" aria-busy="false">
 <div class="case-header"><div><p class="eyebrow">会话统计 · 不含原话</p><h2 id="case-title" tabindex="-1">—</h2><p id="case-meta" class="case-meta">—</p></div><button id="close-detail" class="quiet-button" type="button">收起详情 ↑</button></div>
 <div class="case-actions"><button id="scope-ai-button" class="primary-button" type="button" data-module-entry="analysis">分析这个会话 →</button><button id="manage-conversation" class="quiet-button" type="button" aria-haspopup="dialog" aria-controls="conversation-dialog">管理会话资料</button><button id="analyze-button" class="quiet-button" type="button">重新计算统计</button><button id="report-button" class="quiet-button" type="button" hidden>生成完整报告</button><a id="report-link" class="primary-button as-link" href="#" target="_blank" rel="noreferrer" hidden>打开完整报告 ↗</a></div>
+<details id="chat-heatmap" class="chat-heatmap" hidden></details>
 <section id="relationship-timeline" class="relationship-timeline" hidden aria-label="所选会话关系时间线"></section>
 <div id="metrics" class="metric-grid"></div>
 <section class="evidence-section"><div class="section-heading compact"><div><p class="eyebrow">每日消息</p><h2>会话活跃轨迹</h2></div><div class="legend" aria-label="图例"><span class="you">你</span><span class="them">对方 / 其他成员</span></div></div><div class="chart-frame"><svg id="pulse-chart" viewBox="0 0 900 280" role="img" aria-label="每日消息轨迹" aria-describedby="chart-summary"></svg><p id="chart-empty" class="chart-empty" hidden>当前没有可绘制的日期数据。</p></div><p id="chart-summary" class="sr-only"></p></section>
@@ -142,6 +143,6 @@
 </main>
 </div>
 <dialog id="relationship-event-dialog" aria-labelledby="relationship-event-title"><header class="rt-dialog-heading"><h2 id="relationship-event-title">时间节点</h2><button class="quiet-button rt-dialog-close" type="button" aria-label="关闭时间节点详情">关闭</button></header><div id="relationship-event-body"></div><div class="rt-dialog-actions"><button class="primary-button rt-analyze-range" type="button" hidden>选择这个范围分析</button></div></dialog>
-<script src="/core.js" defer></script><script src="/catalog.js" defer></script><script src="/relationship-timeline.js" defer></script><script src="/app.js" defer></script><script src="/shell.js" defer></script><script src="/library-ui.js" defer></script><script src="/analysis-charts.js" defer></script><script src="/backup-ui.js" defer></script><script src="/analysis-ui.js" defer></script>
+<script src="/core.js" defer></script><script src="/catalog.js" defer></script><script src="/relationship-timeline.js" defer></script><script src="/chat-heatmap.js" defer></script><script src="/app.js" defer></script><script src="/shell.js" defer></script><script src="/library-ui.js" defer></script><script src="/analysis-charts.js" defer></script><script src="/backup-ui.js" defer></script><script src="/analysis-ui.js" defer></script>
 </body>
 </html>

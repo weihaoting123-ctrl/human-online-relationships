@@ -43,6 +43,7 @@
     if (state.activeBundle) {
       const current = metadata(state.activeBundle.id);
       if (current?.hidden_at || current?.source_missing) {
+        window.ChatHeatmap?.clear($('#chat-heatmap'));
         state.loadSequence += 1; state.activeBundle = null;
         $('#dashboard').hidden = true;
       } else {

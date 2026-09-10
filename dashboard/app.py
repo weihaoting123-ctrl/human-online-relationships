@@ -153,6 +153,7 @@ from import_store import (exclusive_import_lock, fingerprint_import,
                           validated_private_root)  # noqa: E402
 from dashboard.search import search_messages  # noqa: E402
 from dashboard import analysis as scoped_ai  # noqa: E402
+from dashboard.chat_heatmap import build_chat_heatmap  # noqa: E402
 from dashboard.library import (LibraryConflictError, LibraryNotFoundError,
                                LibraryValidationError)  # noqa: E402
 from dashboard.library_service import LibraryService  # noqa: E402
@@ -1173,6 +1174,19 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return self._error(HTTPStatus.FORBIDDEN, "本地会话令牌无效")
         try:
             request = self._read_request()
+            if path == "/api/activity/heatmap":
+                if parsed.query or set(request) - {"bundle_id", "date_from", "date_to"}:
+                    raise ValueError("热度请求参数无效")
+                bundle_id = request.get("bundle_id")
+                if (not isinstance(bundle_id, str) or not bundle_id or len(bundle_id) > 240
+                        or any(char in bundle_id for char in "/\\\x00") or bundle_id in {".", ".."}):
+                    raise ValueError("会话标识无效")
+                library_service().require_visible(bundle_id)
+                payload, _ = scoped_ai._source(CONTACTS_DIR, bundle_id)
+                scope = {key: request[key] for key in ("date_from", "date_to") if key in request}
+                heatmap = build_chat_heatmap(payload, scope)
+                library_service().require_visible(bundle_id)
+                return self._json({"status": "ok", "heatmap": heatmap})
             if path == "/api/library/conversations":
                 return self._json(library_service().update_conversation(request))
             if path == "/api/library/tags":

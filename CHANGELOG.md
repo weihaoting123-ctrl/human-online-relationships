@@ -6,6 +6,20 @@
 
 下一版本候选见 [ROADMAP](ROADMAP.md)。候选不代表已经实现，也不是发布日期承诺。
 
+## 0.1.3 — 2026-09-10 · 聊天热度
+
+独立功能迭代 [#25](https://github.com/weihaoting123-ctrl/human-online-relationships/issues/25)，实际发布以 [Release](https://github.com/weihaoting123-ctrl/human-online-relationships/releases/tag/v0.1.3) 为准。
+
+- 会话详情新增可展开的聊天热度：带实际条数的月历、星期 × 小时表、日均/活跃天数、最活跃日期排行。
+- 默认最近有效归档日期前 90 天，可选含首末日的自定义范围，最多 366 天；超限明确拒绝，不截断冒充全量。
+- 时间统计仅在本机完成，不需要 AI、转写或额外依赖；所有媒体消息类型计数，保留真实重复记录，排除无效/未来/系统消息。
+- 独立只读接口沿用来源一致性、大小、路径、同源/会话认证和可见性检查；响应不含原话、身份或媒体路径。
+- 日期修改、切换会话、收起详情及移入回收站时清理旧图和请求；加载、失败、空范围分别说明，不自动重试。
+- 复用浅/深主题及系统字体，支持小屏、键盘、局部时段表滚动，不使用动效或颜色作为唯一信息来源。
+
+热度只描述本机记录中的消息频率，不代表关系质量或实际停联。无数据/旧档案均明确标注。
+本轮不改变数据库、原始聊天、导出、备份、自动化、AI 授权或旧报告；仅发布公开源码，不自动升级私人运行实例。
+
 ## 0.1.2 — 2026-09-07 · 离线导入保存安全
 
 DATA-01 第一阶段，追踪 [#22](https://github.com/weihaoting123-ctrl/human-online-relationships/issues/22)；发布状态以 [Release](https://github.com/weihaoting123-ctrl/human-online-relationships/releases/tag/v0.1.2) 为准，证据见 [审查记录](docs/reviews/v0.1.2-review.md)。
