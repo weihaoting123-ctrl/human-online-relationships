@@ -429,8 +429,8 @@ def _request_result(config, key, content, system):
         body.update({"store": False, "max_completion_tokens": 2400})
     else:
         body["max_tokens"] = 2400
-        if config["model"].startswith("deepseek-v4-"):
-            # V4 defaults to thinking, which shares this bounded output budget.
+        if config["model"] == "deepseek-flash" or config["model"].startswith("deepseek-v4-"):
+            # V4 / V4.1 Flash default to thinking, sharing this output budget.
             # Keep the compact JSON report in non-thinking mode explicitly.
             body["thinking"] = {"type": "disabled"}
     request = urllib.request.Request(PROVIDERS[config["provider"]],
