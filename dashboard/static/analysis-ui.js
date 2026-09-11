@@ -2,7 +2,7 @@
 (() => {
   'use strict';
   const providers = { openai: 'OpenAI', deepseek: 'DeepSeek' };
-  const defaultModels = { openai: 'gpt-5.6-terra', deepseek: 'deepseek-v4-pro' };
+  const defaultModels = { openai: 'gpt-5.6-terra', deepseek: 'deepseek-flash' };
   const endpoints = { openai: 'https://api.openai.com/v1/chat/completions', deepseek: 'https://api.deepseek.com/chat/completions' };
   const focuses = { overview: '对话摘要与行动项', communication: '沟通方式与互动变化', business: '业务推进与待办风险', relationship: '关系观察与边界建议' };
   let bundles = [], config = {}, preview = null, revision = 0, busy = false, loaded = false;

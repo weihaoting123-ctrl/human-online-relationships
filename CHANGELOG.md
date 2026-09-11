@@ -6,6 +6,17 @@
 
 下一版本候选见 [ROADMAP](ROADMAP.md)。候选不代表已经实现，也不是发布日期承诺。
 
+## 0.1.4 — 待发布 · DeepSeek V4.1 Flash 兼容
+
+追踪 [#27](https://github.com/weihaoting123-ctrl/human-online-relationships/issues/27)，实际发布以远端 CI、标签和 Release 核验为准。
+
+- DeepSeek 新连接的默认模型改为官方调用名 `deepseek-flash`；已保存的旧模型和用户自填模型不自动更换。
+- `deepseek-flash` 显式使用非思考模式，保留 JSON 报告格式与 2,400 输出 token 上限；原 `deepseek-v4-` 行为保持兼容，不向任意模型扩大参数。
+- 增加合成回归：新模型请求参数、旧模型保留、默认表单值、留空密钥不解密并保留原加密值、改配置后旧预览必须重新确认。
+
+依据 2026-09-11 核验的 [官方 API 文档](https://api-docs.deepseek.com/) 及 [V4.1 Flash 公告](https://deepseek.com/news/deepseek-v4-1-flash/)。调用名是服务商别名，不锁定今后的底层版本。
+本轮仅修改公开源码，不携带私人配置、不自动迁移私人部署，不新增模型试用、自动上传、重试或计费；审查与验证见 [review 记录](docs/reviews/v0.1.4-review.md)。
+
 ## 0.1.3 — 2026-09-10 · 聊天热度
 
 独立功能迭代 [#25](https://github.com/weihaoting123-ctrl/human-online-relationships/issues/25)，实际发布以 [Release](https://github.com/weihaoting123-ctrl/human-online-relationships/releases/tag/v0.1.3) 为准。

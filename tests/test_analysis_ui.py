@@ -660,7 +660,7 @@ class AnalysisBrowserTests(unittest.TestCase):
         self.page.locator('#ai-settings summary').click()
         self.page.locator('#ai-model').fill('gpt-5.6-terra')
         self.page.locator('#ai-provider').select_option('deepseek')
-        self.expect(self.page.locator('#ai-model')).to_have_value('deepseek-v4-pro')
+        self.expect(self.page.locator('#ai-model')).to_have_value('deepseek-flash')
         self.expect(self.page.locator('#ai-endpoint')).to_contain_text('api.deepseek.com')
         self.page.locator('#ai-provider').select_option('openai')
         self.expect(self.page.locator('#ai-model')).to_have_value('gpt-5.6-terra')
@@ -668,6 +668,15 @@ class AnalysisBrowserTests(unittest.TestCase):
         self.page.locator('#ai-provider').select_option('deepseek')
         self.expect(self.page.locator('#ai-model')).to_have_value('synthetic-custom-model')
         self.assertEqual(self.run_calls(), [])
+
+    def test_existing_deepseek_model_is_not_silently_upgraded(self):
+        self.config.update(provider='deepseek', model='deepseek-v4-pro',
+                           endpoint='https://api.deepseek.com/chat/completions')
+        self.open_ai()
+        self.page.locator('#ai-settings summary').click()
+        self.expect(self.page.locator('#ai-model')).to_have_value('deepseek-v4-pro')
+        self.expect(self.page.locator('#ai-api-key')).to_have_value('')
+        self.assertEqual([call for call in self.api_calls if call[0] == 'POST'], [])
 
     def test_late_config_get_does_not_erase_unsaved_form_input(self):
         self.begin_delayed_config()

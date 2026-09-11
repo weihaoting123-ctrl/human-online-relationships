@@ -121,6 +121,24 @@ class ScopedAnalysisTests(unittest.TestCase):
         with self.assertRaises(ai.AnalysisError):
             self.config(provider="deepseek", api_key="")
 
+    def test_deepseek_flash_configuration_preserves_key_and_requires_new_preview(self):
+        with mock.patch.object(urllib.request, "build_opener") as network:
+            self.config(provider="deepseek", model="deepseek-v4-pro")
+            before = ai._configuration(ai._root(self.root))
+            preview = self.preview()
+            with mock.patch.object(ai, "_unseal", side_effect=AssertionError("saving must not decrypt")):
+                status = self.config(provider="deepseek", model="deepseek-flash", api_key="")
+            after = ai._configuration(ai._root(self.root))
+            self.assertEqual(status["model"], "deepseek-flash")
+            self.assertEqual(status["endpoint"], ai.PROVIDERS["deepseek"])
+            self.assertTrue(status["has_key"])
+            self.assertEqual(before["sealed_key"], after["sealed_key"])
+            self.assertNotEqual(before["revision"], after["revision"])
+            self.assertNotIn(self.secret, json.dumps(status))
+            with self.assertRaisesRegex(ai.AnalysisError, "服务商配置已变化"):
+                ai.run(self.root, self.contacts, {"preview_id": preview["preview_id"], "consent": True})
+        network.assert_not_called()
+
     def test_clear_only_removes_config(self):
         self.config()
         preview = self.preview()
@@ -323,6 +341,39 @@ class ScopedAnalysisTests(unittest.TestCase):
         self.assertNotIn("max_completion_tokens", sent)
         self.assertEqual(opener.open.call_count, 1)
         self.assertNotIn(self.secret, request.data.decode())
+
+    def test_deepseek_flash_uses_bounded_nonthinking_json(self):
+        sample, counts = ai._sample(self.payload, self.request, 100)
+        prepared = {"scope": self.request, "counts": counts, "sample": sample}
+        opener = mock.MagicMock()
+        response = opener.open.return_value.__enter__.return_value
+        response.read.return_value = json.dumps({"choices": [{"message": {"content": json.dumps(RESULT)}}]}).encode()
+        with mock.patch.object(urllib.request, "build_opener", return_value=opener):
+            ai._cloud({"provider": "deepseek", "model": "deepseek-flash"}, self.secret, prepared)
+        request = opener.open.call_args.args[0]
+        sent = json.loads(request.data)
+        self.assertEqual(sent.get("thinking"), {"type": "disabled"})
+        self.assertEqual(sent["model"], "deepseek-flash")
+        self.assertEqual(sent["max_tokens"], 2400)
+        self.assertEqual(sent["response_format"], {"type": "json_object"})
+        self.assertEqual(request.full_url, ai.PROVIDERS["deepseek"])
+        self.assertNotIn("store", sent)
+        self.assertNotIn("max_completion_tokens", sent)
+        self.assertEqual(opener.open.call_count, 1)
+        self.assertNotIn(self.secret, request.data.decode())
+
+    def test_other_deepseek_model_ids_do_not_inherit_flash_parameters(self):
+        for model in ("deepseek-chat", "deepseek-reasoner", "deepseek-flash-custom", "synthetic-model"):
+            with self.subTest(model=model):
+                opener = mock.MagicMock()
+                response = opener.open.return_value.__enter__.return_value
+                response.read.return_value = json.dumps({"choices": [{"message": {"content": json.dumps(RESULT)}}]}).encode()
+                with mock.patch.object(urllib.request, "build_opener", return_value=opener):
+                    ai._request_result({"provider": "deepseek", "model": model}, self.secret, {}, ai.SYSTEM_PROMPT)
+                sent = json.loads(opener.open.call_args.args[0].data)
+                self.assertNotIn("thinking", sent)
+                self.assertEqual(sent["model"], model)
+                self.assertEqual(sent["max_tokens"], 2400)
 
     def test_output_schema_bounded_and_quotes_html_removed(self):
         result = ai._safe_result({**RESULT, "summary": "<script>bad</script>「hidden quote」" + "字" * 2000,
