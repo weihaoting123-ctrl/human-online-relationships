@@ -24,13 +24,13 @@ from pathlib import Path
 
 from dashboard.search import _message_date, _safe_path, _signature, _writer_lock
 from dashboard.analysis_metrics import _message_time
+from dashboard.analysis_focus import CATALOG_ERROR, FOCUSES, prompt_for
 
 
 PROVIDERS = {
     "openai": "https://api.openai.com/v1/chat/completions",
     "deepseek": "https://api.deepseek.com/chat/completions",
 }
-FOCUSES = {"overview", "communication", "business", "relationship"}
 ID_RE = re.compile(r"^[a-f0-9]{48}$")
 MODEL_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,99}$")
 PREVIEW_TTL = 600
@@ -222,6 +222,8 @@ def redact_text(text, names=()):
 
 
 def _scope(request):
+    if not FOCUSES:
+        raise AnalysisError(CATALOG_ERROR)
     scope = {key: request.get(key, "") for key in ("bundle_id", "date_from", "date_to", "focus")}
     if not isinstance(scope["focus"], str) or scope["focus"] not in FOCUSES:
         raise AnalysisError("请选择有效分析方向")
@@ -346,7 +348,7 @@ def preview(data_dir, contacts_dir, request):
             raise AnalysisError("待确认预览过多，请稍后再试")
         config = _configuration(root)
         prepared = {"scope": scope, "signature": signature, "config_revision": config.get("revision"),
-                    "prompt_revision": segments.prompt_revision(),
+                    "prompt_revision": segments.prompt_revision(scope["focus"]),
                     "sample": sample, "counts": counts}
         plan = segments.plan(root, config, prepared)
         approved_calls = segments.approved_calls(root, config, prepared)
@@ -381,14 +383,14 @@ def _cloud(config, key, prepared):
                "eligible_messages": prepared["counts"]["eligible_messages"], "sample": prepared["sample"]}
     if "segment" in prepared:
         content["segment"] = prepared["segment"]
-    return _request_result(config, key, content, SYSTEM_PROMPT)
+    return _request_result(config, key, content, prompt_for(SYSTEM_PROMPT, prepared["scope"]["focus"]))
 
 
 def _cloud_merge(config, key, scope, packets):
     return _request_result(config, key, {
         "focus": scope["focus"], "date_from": scope["date_from"], "date_to": scope["date_to"],
         "analysis_mode": scope.get("analysis_mode", "sample"), "segment_summaries": packets,
-    }, MERGE_PROMPT)
+    }, prompt_for(MERGE_PROMPT, scope["focus"]))
 
 
 def _request_result(config, key, content, system):
@@ -510,7 +512,7 @@ def run(data_dir, contacts_dir, request, *, admission=None):
         if prepared["expires"] <= time.time():
             path.unlink()
             raise AnalysisError("预览已过期，请重新预览并确认")
-        if prepared.get("prompt_revision") != segments.prompt_revision():
+        if prepared.get("prompt_revision") != segments.prompt_revision(prepared["scope"]["focus"]):
             raise AnalysisError("分析提示版本已变化，请重新预览并确认；未消费旧预览")
         if admission is not None:
             # Metadata/module policy is checked again at consumption time. A

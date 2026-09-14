@@ -32,9 +32,9 @@ def _digest(value):
                                      separators=(",", ":")).encode("utf-8")).hexdigest()
 
 
-def prompt_revision():
+def prompt_revision(focus="overview"):
     a = _ai()
-    return _digest([a.SYSTEM_PROMPT, a.MERGE_PROMPT])
+    return _digest([a.prompt_for(a.SYSTEM_PROMPT, focus), a.prompt_for(a.MERGE_PROMPT, focus)])
 
 
 def _partition(sample):
@@ -73,7 +73,7 @@ def _nodes(config, prepared):
     identity = {"version": PIPELINE_VERSION, "provider": config.get("provider"),
                 "model": config.get("model"), "revision": config.get("revision"),
                 "scope": prepared["scope"], "counts": prepared["counts"],
-                "prompts": prompt_revision()}
+                "prompts": prompt_revision(prepared["scope"]["focus"])}
     segments = _partition(prepared["sample"])
     for item in segments:
         # Equal repeated messages are still distinct chronological occurrences.
@@ -130,8 +130,8 @@ def plan(root, config, prepared):
             "split_messages": sum(len(row["text"]) > CHUNK_CHARS for row in prepared["sample"]),
             # Character/JSON budget estimate, not measured tokenizer usage or a monetary quote.
             "estimated_input_tokens": chars * 3 + len(prepared["sample"]) * 100
-                + len(segments) * (2000 + len(a.SYSTEM_PROMPT) * 3)
-                + merge_calls * (120_000 + len(a.MERGE_PROMPT) * 3),
+                + len(segments) * (2000 + len(a.prompt_for(a.SYSTEM_PROMPT, prepared["scope"]["focus"])) * 3)
+                + merge_calls * (120_000 + len(a.prompt_for(a.MERGE_PROMPT, prepared["scope"]["focus"])) * 3),
             "output_token_limit": 2400, "requires_multiple_calls": len(nodes) > 1,
             "estimate_note": "字符预算粗估，包含格式提示与多级汇总；不是精确 token 数或费用，实际按服务商计费。提示版本变化后，旧缓存可能无法复用，重新分析可能重复计费。"}
 

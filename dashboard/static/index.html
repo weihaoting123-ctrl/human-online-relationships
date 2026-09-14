@@ -77,13 +77,14 @@
 <p id="ai-contact-meta" class="field-note">选择联系人对应的私聊，或一个群聊。不跨会话合并人员身份。</p>
 <div class="range-presets" aria-label="快捷时间范围"><button type="button" data-ai-range="7">最近 7 天</button><button type="button" data-ai-range="30">最近 30 天</button><button type="button" data-ai-range="90">最近 90 天</button><button type="button" data-ai-range="all">全部日期</button></div>
 <div class="field-row"><label><span>开始日期</span><input id="ai-date-from" type="date" required></label><label><span>结束日期</span><input id="ai-date-to" type="date" required></label></div>
-<label><span>本次关注</span><select id="ai-focus"><option value="overview">对话摘要与行动项</option><option value="communication">沟通方式与互动变化</option><option value="business">业务推进与待办风险</option><option value="relationship">关系观察与边界建议</option></select></label>
+<label><span>分析视角</span><select id="ai-focus" aria-describedby="ai-focus-note" disabled><option value="">正在加载分析视角…</option></select></label>
+<p id="ai-focus-note" class="field-note" aria-live="polite">正在加载分析视角…</p>
 <div class="ai-mode-options" role="group" aria-label="文字覆盖方式"><label><input type="radio" name="ai-analysis-mode" value="sample" checked><span><strong>抽样文字</strong><small>按时间选取，控制分析规模</small></span></label><label><input type="radio" name="ai-analysis-mode" value="full"><span><strong>全量文字</strong><small>选定会话与日期内逐段分析</small></span></label></div>
 <label id="ai-sample-limit"><span>最多发送的文本样本</span><select id="ai-max-messages"><option value="100">100 条 · 轻量</option><option value="300" selected>300 条 · 标准</option><option value="600">600 条 · 扩展</option><option value="1200">1,200 条</option><option value="3000">3,000 条</option><option value="6000">6,000 条</option></select></label>
 <p id="ai-mode-note" class="field-note">抽样按时间分层选取。全部日期只改变时间范围，不会自动切换到全量文字。</p>
 <label class="consent-line"><input id="ai-include-voice" type="checkbox"><span>加入这个区间内已完成的语音转写。转写在本机生成，可能有识别错误；只加入文字，原始音频不上传。</span></label>
 <p class="field-note">只处理当前一个会话。全量文字包含所选日期内全部可用文字及勾选的转写；图片、原始音频和附件不参与分析。</p>
-<button id="ai-preview-button" class="primary-button" type="submit">在本机核对范围</button>
+<button id="ai-preview-button" class="primary-button" type="submit" disabled>在本机核对范围</button>
 </fieldset></form>
 <details id="ai-settings" class="workspace-panel settings-panel"><summary>模型连接设置 <span>API Key 只在本机加密保存</span></summary>
 <form id="ai-config-form"><fieldset id="ai-config-fields"><label><span>云端服务商</span><select id="ai-provider"><option value="openai">OpenAI</option><option value="deepseek">DeepSeek</option></select></label><p id="ai-endpoint" class="field-note">目标：api.openai.com</p><label><span>模型名称</span><input id="ai-model" type="text" maxlength="100" required autocomplete="off" placeholder="填写该服务商支持的模型 ID"></label><label><span>API Key</span><input id="ai-api-key" type="password" maxlength="512" autocomplete="new-password" placeholder="仅在此页面输入，不要发到聊天窗口"></label><p id="ai-key-note" class="field-note">尚未保存密钥。保存设置不会发送聊天或试用模型。</p><div class="settings-actions"><button id="ai-save-config" class="quiet-button" type="submit">保存连接</button><button id="ai-clear-config" class="text-button" type="button">移除连接</button></div></fieldset></form>

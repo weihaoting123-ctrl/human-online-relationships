@@ -4,7 +4,10 @@
   const providers = { openai: 'OpenAI', deepseek: 'DeepSeek' };
   const defaultModels = { openai: 'gpt-5.6-terra', deepseek: 'deepseek-flash' };
   const endpoints = { openai: 'https://api.openai.com/v1/chat/completions', deepseek: 'https://api.deepseek.com/chat/completions' };
-  const focuses = { overview: '对话摘要与行动项', communication: '沟通方式与互动变化', business: '业务推进与待办风险', relationship: '关系观察与边界建议' };
+  const focusLoadError = '分析视角暂时无法加载，请刷新页面后重试。';
+  let focusCatalog = null, focusLoad = null;
+  const focusLabel = (id) => focusCatalog?.presets.get(id)?.label || '分析报告';
+  const canPreview = () => Boolean(focusCatalog) && !busy && ArchiveShell.isEnabled('analysis');
   let bundles = [], config = {}, preview = null, revision = 0, busy = false, loaded = false;
   let configDirty = false, expiryTimer = null, displayedReport = null;
   let configSequence = 0, reportSequence = 0;
@@ -14,6 +17,63 @@
   const send = (path, body) => api(path, { method: 'POST', body: JSON.stringify(body) });
   const byId = (id) => bundles.find((bundle) => bundle.id === id);
   const contact = (id) => byId(id) ? displayName(byId(id)) : '所选会话';
+  function focusLabelSpan(id) {
+    const label = el('span', '', focusLabel(id));
+    label.dataset.aiFocusLabel = typeof id === 'string' ? id : '';
+    return label;
+  }
+  function updateFocusControls() {
+    $('#ai-focus').disabled = !canPreview();
+    $('#ai-preview-button').disabled = !canPreview();
+    $('#ai-recheck-partial').disabled = !canPreview();
+    canRun();
+  }
+  function renderFocusOptions(id) {
+    const selected = focusCatalog.presets.get(id);
+    const choices = [...focusCatalog.presets.values()].filter((item) => !item.legacy || item.id === id);
+    $('#ai-focus').replaceChildren(...choices.map((item) => {
+      const option = el('option', '', item.label);
+      option.value = item.id; return option;
+    }));
+    $('#ai-focus').value = selected ? id : '';
+    updateFocusNote();
+  }
+  function updateFocusNote() {
+    const selected = focusCatalog?.presets.get($('#ai-focus').value);
+    $('#ai-focus-note').textContent = selected
+      ? `${selected.legacy ? '旧版视角：保留这份报告原来的分析方式。' : ''}${selected.description}`
+      : focusCatalog ? '请选择有效的分析视角。' : focusLoadError;
+  }
+  function loadFocusCatalog() {
+    if (focusLoad) return focusLoad;
+    focusLoad = (async () => {
+      try {
+        const payload = await api('/analysis-focus.json');
+        if (payload.version !== 1 || typeof payload.default !== 'string' || !Array.isArray(payload.presets) || !payload.presets.length) throw new Error();
+        const presets = new Map();
+        for (const item of payload.presets) {
+          if (!item || typeof item.id !== 'string' || !/^[a-z][a-z0-9_]{0,63}$/.test(item.id)
+            || presets.has(item.id) || typeof item.legacy !== 'boolean'
+            || typeof item.label !== 'string' || !item.label.trim() || item.label.length > 80
+            || typeof item.description !== 'string' || !item.description.trim() || item.description.length > 500) throw new Error();
+          // Only display metadata belongs in the browser's selection state.
+          presets.set(item.id, { id: item.id, label: item.label, description: item.description, legacy: item.legacy });
+        }
+        if (!presets.has(payload.default) || presets.get(payload.default).legacy) throw new Error();
+        focusCatalog = { presets, default: payload.default };
+        renderFocusOptions(focusCatalog.default);
+        document.querySelectorAll('[data-ai-focus-label]').forEach((label) => {
+          label.textContent = focusLabel(label.dataset.aiFocusLabel);
+        });
+      } catch (_) {
+        focusCatalog = null;
+        const option = el('option', '', '暂时无法加载分析视角'); option.value = '';
+        $('#ai-focus').replaceChildren(option);
+        $('#ai-focus-note').textContent = focusLoadError;
+      } finally { updateFocusControls(); }
+    })();
+    return focusLoad;
+  }
   const outputErrorCodes = new Set([
     'OUTPUT_FIELDS', 'OUTPUT_TYPE', 'OUTPUT_LIMIT', 'OUTPUT_ENUM', 'OUTPUT_DATE',
     'OUTPUT_DATE_SCOPE', 'OUTPUT_EVIDENCE_REF', 'OUTPUT_EVIDENCE_DUP', 'OUTPUT_EVIDENCE_RANGE',
@@ -55,7 +115,7 @@
     });
   }
   function canRun() {
-    $('#ai-run-button').disabled = !ArchiveShell.isEnabled('analysis') || busy || !preview?.recipient?.configured || configDirty || !$('#ai-consent').checked
+    $('#ai-run-button').disabled = !canPreview() || !preview?.recipient?.configured || configDirty || !$('#ai-consent').checked
       || (Number(preview?.plan?.blocked_calls) > 0 && !$('#ai-retry-uncertain').checked);
   }
   function invalidate() {
@@ -75,9 +135,8 @@
     busy = value;
     $('#ai-scope-fields').disabled = value || !ArchiveShell.isEnabled('analysis');
     $('#ai-config-fields').disabled = value;
-    $('#ai-recheck-partial').disabled = value || !ArchiveShell.isEnabled('analysis');
     $('#ai-run-button').textContent = value ? '正在分析，请勿重复提交…' : '确认并开始云端分析';
-    canRun();
+    updateFocusControls();
   }
   function updateMode() {
     const full = selectedMode() === 'full';
@@ -164,7 +223,7 @@
     const partial = coverage?.complete === false;
     $('#ai-placeholder').hidden = true; $('#ai-result').hidden = false;
     if (!busy) $('#ai-job-progress').hidden = true;
-    $('#ai-result-title').textContent = `${contact(report.scope?.bundle_id)} · ${focuses[report.scope?.focus] || '分析报告'}`;
+    $('#ai-result-title').replaceChildren(`${contact(report.scope?.bundle_id)} · `, focusLabelSpan(report.scope?.focus));
     $('#ai-result-meta').textContent = `${report.scope?.date_from || ''} — ${report.scope?.date_to || ''} · ${modeName(mode)} · ${number(coverage?.analyzed_messages ?? report.sample_messages)} 条已分析${report.scope?.include_voice_transcripts ? ' · 已选择加入语音转写' : ''} · ${providers[report.provider] || report.provider || ''} / ${report.model || ''} · ${formatLocalTime(report.created_at)}`;
     $('#ai-result-status').hidden = !partial;
     const remainingMessages = Math.max(0, Number(coverage?.eligible_messages || 0) - Number(coverage?.analyzed_messages || 0));
@@ -202,11 +261,13 @@
   $('#ai-recheck-partial').addEventListener('click', () => {
     if (busy || !displayedReport?.scope) return;
     const scope = displayedReport.scope;
+    if (!focusCatalog) { invalidate(); feedback(focusLoadError, true); return; }
+    if (!focusCatalog.presets.has(scope.focus)) { invalidate(); feedback('无法识别这份报告的分析视角，请选择新的分析视角后重新核对。', true); return; }
     if (!byId(scope.bundle_id)) { feedback('这份报告对应的会话目前不在本机档案中，请先刷新或同步档案。', true); return; }
     selectBundle(scope.bundle_id);
     $('#ai-date-from').value = scope.date_from || '';
     $('#ai-date-to').value = scope.date_to || '';
-    $('#ai-focus').value = focuses[scope.focus] ? scope.focus : 'overview';
+    renderFocusOptions(scope.focus);
     $('#ai-include-voice').checked = Boolean(scope.include_voice_transcripts);
     const mode = displayedReport.mode || scope.analysis_mode || 'sample';
     document.querySelectorAll('input[name="ai-analysis-mode"]').forEach((input) => { input.checked = input.value === (mode === 'full' ? 'full' : 'sample'); });
@@ -222,7 +283,10 @@
     payload.reports.forEach((report) => {
       const button = el('button', 'history-item'); button.type = 'button';
       const label = el('span');
-      label.append(el('strong', '', contact(report.scope?.bundle_id)), el('small', '', `${report.scope?.date_from || ''} — ${report.scope?.date_to || ''} · ${modeName(report.mode || report.scope?.analysis_mode)} · ${focuses[report.scope?.focus] || '分析报告'}${report.scope?.include_voice_transcripts ? ' · 已选择加入语音转写' : ''}`));
+      const scopeLabel = el('small');
+      scopeLabel.append(`${report.scope?.date_from || ''} — ${report.scope?.date_to || ''} · ${modeName(report.mode || report.scope?.analysis_mode)} · `,
+        focusLabelSpan(report.scope?.focus), report.scope?.include_voice_transcripts ? ' · 已选择加入语音转写' : '');
+      label.append(el('strong', '', contact(report.scope?.bundle_id)), scopeLabel);
       if (report.coverage?.complete === false) label.append(el('small', 'ai-history-partial', `部分结果 · ${number(report.coverage.completed_segments)} / ${number(report.coverage.total_segments)} 段`));
       button.append(label, el('span', 'history-provider', `${providers[report.provider] || report.provider} / ${report.model}`), el('span', 'history-date', formatLocalTime(report.created_at)), el('span', '', '查看 →'));
       button.addEventListener('click', () => { if (!busy) loadReport(report.id); });
@@ -232,14 +296,22 @@
   async function activate() {
     if (loaded) return;
     loaded = true;
-    try { await Promise.all([loadConfig(), loadHistory(), recoverJobs()]); }
+    try { await Promise.all([loadFocusCatalog(), loadConfig(), loadHistory(), recoverJobs()]); }
     catch (error) { loaded = false; feedback(error.message, true); }
   }
   $('#ai-contact-search').addEventListener('input', populateBundles);
   $('#ai-bundle').addEventListener('change', () => selectBundle($('#ai-bundle').value));
-  ['#ai-date-from', '#ai-date-to', '#ai-focus', '#ai-max-messages', '#ai-include-voice'].forEach((id) => {
+  ['#ai-date-from', '#ai-date-to', '#ai-max-messages', '#ai-include-voice'].forEach((id) => {
     $(id).addEventListener('input', invalidate); $(id).addEventListener('change', invalidate);
   });
+  ['input', 'change'].forEach((event) => $('#ai-focus').addEventListener(event, () => {
+    const selected = focusCatalog?.presets.get($('#ai-focus').value);
+    if (selected && !selected.legacy) [...$('#ai-focus').options].forEach((option) => {
+      if (focusCatalog.presets.get(option.value)?.legacy) option.remove();
+    });
+    updateFocusNote();
+    invalidate();
+  }));
   document.querySelectorAll('input[name="ai-analysis-mode"]').forEach((input) => input.addEventListener('change', updateMode));
   ['#ai-date-from', '#ai-date-to'].forEach((id) => $(id).addEventListener('input', () => {
     document.querySelectorAll('[data-ai-range]').forEach((button) => button.setAttribute('aria-pressed', 'false'));
@@ -281,6 +353,8 @@
     event.preventDefault(); if (busy) return;
     if (!ArchiveShell.isEnabled('analysis')) { feedback('AI 分析已停用。可查看历史，或到设置中启用新的分析。'); return; }
     invalidate(); const requested = revision;
+    if (!focusCatalog) { feedback(focusLoadError, true); return; }
+    if (!focusCatalog.presets.has($('#ai-focus').value)) { feedback('请选择有效的分析视角。', true); return; }
     const scope = { bundle_id: $('#ai-bundle').value, date_from: $('#ai-date-from').value, date_to: $('#ai-date-to').value, focus: $('#ai-focus').value, analysis_mode: selectedMode(), include_voice_transcripts: $('#ai-include-voice').checked };
     if (scope.analysis_mode === 'sample') scope.max_messages = Number($('#ai-max-messages').value);
     if (!scope.bundle_id || !scope.date_from || !scope.date_to || scope.date_from > scope.date_to) { feedback('请选择一个会话，并填写有效的起止日期。', true); return; }
@@ -296,7 +370,7 @@
       $('#ai-placeholder').hidden = true; $('#ai-result').hidden = true; $('#ai-preview').hidden = false;
       $('#ai-job-progress').hidden = true;
       $('#ai-preview-title').textContent = contact(scope.bundle_id);
-      $('#ai-preview-range').textContent = `${scope.date_from} — ${scope.date_to} · ${modeName(mode)} · ${focuses[scope.focus]}`;
+      $('#ai-preview-range').textContent = `${scope.date_from} — ${scope.date_to} · ${modeName(mode)} · ${focusLabel(scope.focus)}`;
       AnalysisCharts.renderCoverage($('#ai-preview-coverage'), { eligible: response.eligible_messages, analyzed: response.sample_messages, segments: plan.segments, mode, planned: true });
       AnalysisCharts.renderMetrics($('#ai-metrics'), response.metrics, `${contact(scope.bundle_id)} · ${scope.date_from} — ${scope.date_to}`);
       window.RelationshipTimeline?.render($('#ai-relationship-timeline'), {
@@ -323,7 +397,7 @@
       const remaining = new Date(response.expires_at).getTime() - Date.now();
       expiryTimer = setTimeout(() => { if (!busy && preview) { invalidate(); feedback('核对结果已过期，请重新核对范围。'); } }, Number.isFinite(remaining) ? Math.max(0, remaining) : 600000);
     } catch (error) { if (requested === revision) feedback(error.message, true); }
-    finally { $('#ai-preview-button').disabled = !ArchiveShell.isEnabled('analysis'); $('#ai-recheck-partial').disabled = busy || !ArchiveShell.isEnabled('analysis'); }
+    finally { $('#ai-preview-button').disabled = !canPreview(); $('#ai-recheck-partial').disabled = !canPreview(); }
   });
   function progress(job) {
     const value = job.progress || {};
@@ -429,7 +503,6 @@
   document.addEventListener('archive:modules', () => {
     if (!ArchiveShell.isEnabled('analysis')) invalidate();
     setBusyState(busy);
-    $('#ai-preview-button').disabled = !ArchiveShell.isEnabled('analysis');
   });
   setBusyState(busy);
   ArchiveShell.register('analysis-workspace', { activate });

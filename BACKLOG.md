@@ -77,6 +77,12 @@
 
 本阶段不接管旧微信/QQ 在线提取器、显式文件输出、原生同步检查点，也不实现预检向导。主需求 [#15](https://github.com/weihaoting123-ctrl/human-online-relationships/issues/15) 保持开放；DATA-01 与 IMP-01 不因这个补丁全部关闭。UI 工作区重组仍按依赖后续独立迭代。
 
+## 用户指定独立迭代：AI-05 / v0.1.8 候选
+
+关系分析视角，P2，待验收。[主 Issue #36](https://github.com/weihaoting123-ctrl/human-online-relationships/issues/36) · [设计](docs/superpowers/specs/2026-09-15-relationship-analysis-views.md) · [计划](docs/superpowers/plans/2026-09-15-relationship-analysis-views.md) · [审查记录](docs/reviews/v0.1.8-review.md)。
+
+限定六个主题视角、随选项变化的说明、分段及汇总指导、旧方向兼容与视角级提示版本。保留按次确认、历史报告和可复用旧缓存；不自动重新分析，不增加关系评分或推断真实动机。沿用原生选择器和现有样式，不等于完成 UI-01 工作区重组。候选基于 v0.1.7，CI 与基线合并后另核验正式发布。
+
 ## 用户指定独立迭代：AI-04 / v0.1.7 候选
 
 分段格式契约和具体错误提示，P2，待验收。[主 Issue #34](https://github.com/weihaoting123-ctrl/human-online-relationships/issues/34) · [计划](docs/plans/2026-09-15-analysis-output-diagnostics.md) · [验证记录](docs/reviews/v0.1.7-review.md)。
