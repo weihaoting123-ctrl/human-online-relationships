@@ -43,40 +43,54 @@
     value.append(node('h3', '', title), node('p', 'field-note', subtitle)); return value;
   }
   function bars(parent, rows, { stacked = false, sparse = false } = {}) {
-    if (!rows.length || !rows.some((row) => n(row.count))) {
+    if (!rows.length) {
       parent.append(node('p', 'chart-empty', '此范围暂无可绘制的记录。')); return;
     }
     const width = 800, height = 170, plotHeight = 123, inset = 10;
     const svg = svgNode('svg', { viewBox: `0 0 ${width} ${height}`, role: 'img', 'aria-label': `${parent.querySelector('h3').textContent}，具体数值见下方数值表` });
     const max = Math.max(...rows.map((row) => n(row.count)), 1);
     const step = (width - 2 * inset) / rows.length, bw = Math.max(.5, step * .72);
+    const points = [];
     [0, .5, 1].forEach((part) => svg.append(svgNode('line', { x1: inset, x2: width - inset, y1: 15 + plotHeight * part, y2: 15 + plotHeight * part, class: 'ai-chart-gridline' })));
     rows.forEach((row, index) => {
       const x = inset + index * step + (step - bw) / 2;
       const totalHeight = plotHeight * n(row.count) / max;
+      const markers = [{ y: 138 - totalHeight, tone: stacked ? 'other' : 'me' }];
       if (stacked) {
         const mine = Math.min(n(row.me), n(row.count));
         const mineHeight = plotHeight * mine / max;
+        markers.push({ y: 138 - mineHeight, tone: 'me' });
         svg.append(svgNode('rect', { x, y: 138 - mineHeight, width: bw, height: mineHeight, class: 'ai-bar-me' }));
         svg.append(svgNode('rect', { x, y: 138 - totalHeight, width: bw, height: Math.max(0, totalHeight - mineHeight), class: 'ai-bar-other' }));
       } else svg.append(svgNode('rect', { x, y: 138 - totalHeight, width: bw, height: totalHeight, rx: rows.length < 30 ? 2 : 0, class: 'ai-bar-me' }));
+      points.push({ x: x + bw / 2, label: row.probeLabel ?? row.label, markers,
+        rows: stacked ? [
+          { label: '我', value: `${fmt(row.me)} 条`, tone: 'me' },
+          { label: '对方 / 其他成员', value: `${fmt(row.other)} 条`, tone: 'other' },
+          { label: '合计', value: `${fmt(row.count)} 条` },
+        ] : [{ label: '消息数', value: `${fmt(row.count)} 条`, tone: 'me' }],
+      });
       const labelEvery = sparse ? Math.max(1, Math.ceil(rows.length / 7)) : 1;
       if (index % labelEvery === 0 || index === rows.length - 1) {
         const first = index === 0, last = index === rows.length - 1;
         svg.append(svgNode('text', { x: first ? inset : last ? width - inset : x + bw / 2, y: 159, 'text-anchor': first ? 'start' : last ? 'end' : 'middle', class: 'ai-chart-label' }, row.label));
       }
     }); parent.append(svg);
+    window.ChartProbe?.attach(svg, { points, plot: { left: inset, right: width - inset, top: 15, bottom: 138 } });
   }
   function distribution(parent, rows) {
     const max = Math.max(...rows.map((row) => n(row.count)), 1);
     const list = node('div', 'ai-distribution');
+    const items = [];
     rows.forEach((row) => {
       const item = node('div', 'ai-distribution-row');
       item.append(node('span', '', row.label));
       const track = node('span', 'ai-distribution-track'), fill = node('span');
       fill.style.width = `${n(row.count) / max * 100}%`; track.append(fill);
       item.append(track, node('strong', '', fmt(row.count))); list.append(item);
+      items.push({ element: item, label: row.label, rows: [{ label: '消息数', value: `${fmt(row.count)} 条` }] });
     }); parent.append(list);
+    window.ChartProbe?.attachRows(parent, items);
   }
   function duration(seconds) {
     if (seconds === null || seconds === undefined || !Number.isFinite(Number(seconds))) return '暂无样本';
@@ -86,6 +100,7 @@
     return `${(value / 3600).toFixed(1)} 小时`;
   }
   function renderMetrics(target, metrics, range = '') {
+    window.ChartProbe?.detach(target);
     target.replaceChildren(); target.hidden = !metrics?.totals;
     if (!metrics?.totals) return;
     const totals = metrics.totals || {};
@@ -102,12 +117,12 @@
     const monthly = metrics.activity_granularity === 'month';
     const activityTitle = monthly ? (n(metrics.activity_month_step) > 1 ? `每 ${fmt(metrics.activity_month_step)} 个月的消息变化` : '按月的消息变化') : '按日的消息变化';
     const activityPanel = panel(activityTitle, '蓝色为我，青色为对方或其他成员；仅表示消息数量。', true);
-    bars(activityPanel, activity.map((row) => ({ ...row, label: String(row.date).slice(monthly ? 0 : 5) })), { stacked: true, sparse: true });
+    bars(activityPanel, activity.map((row) => ({ ...row, label: String(row.date).slice(monthly ? 0 : 5), probeLabel: String(row.date) })), { stacked: true, sparse: true });
     fallback(activityPanel, [monthly ? '月份' : '日期', '全部', '我', '对方 / 其他成员'], activity.map((row) => [row.date, fmt(row.count), fmt(row.me), fmt(row.other)]), activityTitle);
     grid.append(activityPanel);
     const hours = Array.isArray(metrics.hours) ? metrics.hours : [];
     const hoursPanel = panel('一天中的消息分布', '按本机统计时区汇总，0–23 时。');
-    bars(hoursPanel, hours.map((row) => ({ ...row, label: `${row.hour}` })), { sparse: true });
+    bars(hoursPanel, hours.map((row) => ({ ...row, label: `${row.hour}`, probeLabel: `${row.hour}:00` })), { sparse: true });
     fallback(hoursPanel, ['小时', '消息数'], hours.map((row) => [`${row.hour}:00`, fmt(row.count)]), '24 小时消息分布'); grid.append(hoursPanel);
     const weekNames = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
     const weekdays = (Array.isArray(metrics.weekdays) ? metrics.weekdays : []).map((row) => ({ ...row, label: weekNames[row.weekday] || '未知' }));
@@ -123,12 +138,17 @@
     const track = node('div', 'ai-sender-track'); track.setAttribute('aria-hidden', 'true');
     shares.forEach((row, index) => { const portion = node('span', index ? 'ai-sender-other' : 'ai-sender-me'); portion.style.width = `${total ? row.count / total * 100 : 0}%`; track.append(portion); });
     senderPanel.append(track, table(['发言方', '消息数', '份额'], shares.map((row) => [row.label, fmt(row.count), `${total ? (row.count / total * 100).toFixed(1) : '0.0'}%`]), '发言份额'));
+    window.ChartProbe?.attachRows(senderPanel, [{ element: track, label: '发言份额',
+      rows: shares.map((row, index) => ({ label: row.label, tone: index ? 'other' : 'me',
+        value: `${fmt(row.count)} 条 · ${total ? (row.count / total * 100).toFixed(1) : '0.0'}%` })),
+    }]);
     grid.append(senderPanel);
     const replyPanel = panel('相邻换人消息的间隔', '这是可计算的消息时间差，不能等同实际回复速度或意愿。', true);
     const response = metrics.response_times || {};
     const medians = [['me', '我'], ['other', '对方 / 其他成员']];
     const longest = Math.max(...medians.map(([key]) => n(response[key]?.median_seconds)), 1);
     const replyBars = node('div', 'ai-reply-bars');
+    const replyItems = [];
     medians.forEach(([key, label]) => {
       const row = node('div', 'ai-reply-row');
       row.append(node('span', '', `${label} · 中位数`));
@@ -136,7 +156,13 @@
       fill.style.width = `${n(response[key]?.median_seconds) / longest * 100}%`;
       track.setAttribute('aria-hidden', 'true'); track.append(fill);
       row.append(track, node('strong', '', duration(response[key]?.median_seconds))); replyBars.append(row);
+      replyItems.push({ element: row, label, rows: [
+        { label: '中位数', value: duration(response[key]?.median_seconds), tone: key },
+        { label: '间隔样本', value: fmt(response[key]?.samples) },
+        { label: '90% 的间隔不超过', value: duration(response[key]?.p90_seconds) },
+      ] });
     }); replyPanel.append(replyBars);
+    window.ChartProbe?.attachRows(replyPanel, replyItems);
     replyPanel.append(table(['后发言方', '间隔样本', '中位数', '90% 的间隔不超过'], medians.map(([key, label]) => [label, fmt(response[key]?.samples), duration(response[key]?.median_seconds), duration(response[key]?.p90_seconds)]), '相邻换人消息间隔'));
     grid.append(replyPanel); target.append(grid);
     const methodology = node('details', 'ai-methodology'), methodList = node('ul');
