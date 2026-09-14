@@ -6,6 +6,18 @@
 
 下一版本候选见 [ROADMAP](ROADMAP.md)。候选不代表已经实现，也不是发布日期承诺。
 
+## 0.1.8 — 待发布 · 关系分析视角
+
+追踪 [AI-05 / #36](https://github.com/weihaoting123-ctrl/human-online-relationships/issues/36)，基于 v0.1.7 候选；不代表已合并或正式 Release。
+
+- 「本次关注」改为「分析视角」：关系全景、互动节奏、关键节点、共同计划、联系空白、沟通与边界；各有简短说明，默认关系全景。
+- 名称、说明和可信分析指导使用同一目录；选定视角同时作用于分段与汇总，不只是改变报告标题。
+- 旧报告保留四种原名称与范围，重新核对时临时恢复旧选项；不悄悄转换历史方向。
+- 按所选视角的实际提示识别预览与缓存；旧方向提示及缓存算法不变，修改显示文案或其他视角不会无故作废无关缓存。调用预算包含新增指导。
+- 更换视角清空预览及发送/重复计费确认；目录加载失败或历史视角未知时阻止新预览，不自动分析。
+
+仅使用合成材料开发与验证，不调用真实模型、不改原聊天或模型连接。见 [设计](docs/superpowers/specs/2026-09-15-relationship-analysis-views.md)、[计划](docs/superpowers/plans/2026-09-15-relationship-analysis-views.md) 与 [审查记录](docs/reviews/v0.1.8-review.md)。
+
 ## 0.1.7 — 待发布 · 分析格式约束与具体错误提示
 
 追踪 [AI-04 / #34](https://github.com/weihaoting123-ctrl/human-online-relationships/issues/34)，基于 v0.1.6 候选；不代表已合并或正式 Release。
