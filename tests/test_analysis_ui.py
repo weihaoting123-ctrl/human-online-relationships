@@ -257,7 +257,7 @@ class AnalysisBrowserTests(unittest.TestCase):
         self.page.locator('#ai-bundle').select_option('fixture_000')
         self.page.locator('#ai-date-from').fill('2026-01-01')
         self.page.locator('#ai-date-to').fill('2026-09-01')
-        self.page.locator('#ai-focus').select_option('communication')
+        self.page.locator('#ai-focus').select_option('interaction_rhythm')
         self.page.locator('#ai-max-messages').select_option('100')
 
     def preview(self):
@@ -311,7 +311,7 @@ class AnalysisBrowserTests(unittest.TestCase):
         preview_body = [body for method, path, body in self.api_calls
                         if method == 'POST' and path == '/api/ai/preview'][-1]
         self.assertEqual(preview_body, {'bundle_id': 'fixture_000', 'date_from': '2026-01-01',
-                                       'date_to': '2026-09-01', 'focus': 'communication', 'max_messages': 100,
+                                       'date_to': '2026-09-01', 'focus': 'interaction_rhythm', 'max_messages': 100,
                                        'include_voice_transcripts': False, 'analysis_mode': 'sample'})
         self.capture('analysis-ui-desktop.png')
         self.page.locator('[data-view="maintenance"]').click()
