@@ -77,6 +77,12 @@
 
 本阶段不接管旧微信/QQ 在线提取器、显式文件输出、原生同步检查点，也不实现预检向导。主需求 [#15](https://github.com/weihaoting123-ctrl/human-online-relationships/issues/15) 保持开放；DATA-01 与 IMP-01 不因这个补丁全部关闭。UI 工作区重组仍按依赖后续独立迭代。
 
+## 用户指定独立迭代：AI-04 / v0.1.7 候选
+
+分段格式契约和具体错误提示，P2，待验收。[主 Issue #34](https://github.com/weihaoting123-ctrl/human-online-relationships/issues/34) · [计划](docs/plans/2026-09-15-analysis-output-diagnostics.md) · [验证记录](docs/reviews/v0.1.7-review.md)。
+
+限定字段级安全诊断、尝试/成功/复用计数和合法事件汇总修复；不记录失败原文，不扩大证据范围，不取消逐次确认或计费保护。旧失败没有记录的字段无法恢复。提示升级后重新预览新调用计划；旧缓存可能不复用。本轮不等于 DIAG-01 导出功能或所有 AI 功能完成。
+
 ## C：处理流程与数据覆盖（候选 v0.3.0）
 
 | ID | 需求 / 优先级 | 完成条件 | 非目标与依赖 |
