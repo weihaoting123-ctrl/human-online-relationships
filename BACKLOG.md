@@ -38,6 +38,12 @@
 
 验收范围：月历、星期/小时分布、活跃日排行、90 天默认及 366 天内显式范围、完整聚合口径、无正文 DTO、只读与迟到响应保护、小屏/键盘/深色合成回归。实现进入 v0.1.3，发布状态以对应 Release/CI 为准；不把 B 批工作台重组、DEMO-01 或 A11Y-01 标成完成。不自动升级私人运行部署。
 
+### 用户指定独立迭代：UI-04 / v0.1.6 候选
+
+联系密度红色日历，P2，待验收。[主 Issue #32](https://github.com/weihaoting123-ctrl/human-online-relationships/issues/32) · [设计](docs/plans/2026-09-15-density-calendar.md) · [验证记录](docs/reviews/v0.1.6-review.md)。
+
+范围：时间线密度的默认单月、十二个月年视图、红色热度、逐日读数和可访问操作；同口径本机日聚合、完整覆盖说明与旧报告缺失降级。独立模块，不改分析费用/授权，不以周汇总推造每日计数。候选基于 v0.1.5；CI 和基线合并后另核验正式发布。
+
 ### 用户指定独立迭代：UI-03 / v0.1.5 候选
 
 图表吸附读数，P2，待验收。[主 Issue #29](https://github.com/weihaoting123-ctrl/human-online-relationships/issues/29) · [设计](docs/superpowers/specs/2026-09-15-chart-probe-design.md) · [验证记录](docs/reviews/v0.1.5-review.md)。
