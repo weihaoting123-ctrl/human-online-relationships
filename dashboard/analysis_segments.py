@@ -13,6 +13,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 
 from dashboard import timeline_schema as timeline
+from dashboard.analysis_errors import exception_detail, public_error_detail
 
 CHUNK_MESSAGES = 400
 CHUNK_CHARS = 24_000
@@ -115,6 +116,7 @@ def _cache(root, key):
 
 
 def plan(root, config, prepared):
+    a = _ai()
     segments, levels, _ = _nodes(config, prepared)
     nodes = segments + [item for level in levels for item in level]
     caches = [_cache(root, item["key"]) for item in nodes]
@@ -127,9 +129,11 @@ def plan(root, config, prepared):
             "blocked_calls": blocked, "merge_calls": merge_calls, "characters": chars,
             "split_messages": sum(len(row["text"]) > CHUNK_CHARS for row in prepared["sample"]),
             # Character/JSON budget estimate, not measured tokenizer usage or a monetary quote.
-            "estimated_input_tokens": chars * 3 + len(prepared["sample"]) * 100 + len(segments) * 2000 + merge_calls * 120_000,
+            "estimated_input_tokens": chars * 3 + len(prepared["sample"]) * 100
+                + len(segments) * (2000 + len(a.SYSTEM_PROMPT) * 3)
+                + merge_calls * (120_000 + len(a.MERGE_PROMPT) * 3),
             "output_token_limit": 2400, "requires_multiple_calls": len(nodes) > 1,
-            "estimate_note": "字符预算粗估，包含多级汇总；不是精确 token 数或费用，实际按服务商计费。"}
+            "estimate_note": "字符预算粗估，包含格式提示与多级汇总；不是精确 token 数或费用，实际按服务商计费。提示版本变化后，旧缓存可能无法复用，重新分析可能重复计费。"}
 
 
 def approved_calls(root, config, prepared):
@@ -198,9 +202,11 @@ def _call(root, node, config, job_id, retry_uncertain, approval, invoke):
             result = invoke()
             a._write(root / f"call-{node['key']}.json", {**record, "state": "completed", "sealed_result": a._seal(result)})
             return result, False
-        except Exception:
+        except Exception as exc:
             try:
-                a._write(root / f"call-{node['key']}.json", {**record, "state": "error"})
+                detail = exception_detail(exc)
+                a._write(root / f"call-{node['key']}.json", {**record, "state": "error",
+                         **({"error_detail": detail} if detail else {})})
             except Exception:
                 pass
             raise
@@ -225,9 +231,11 @@ def execute(root, config, key, prepared, job, retry_uncertain=False):
     segments, levels, final_node = _nodes(config, prepared)
     total = len(segments) + sum(len(level) for level in levels)
     progress = {"stage": "segments", "completed_calls": 0, "total_calls": total,
-                "completed_segments": 0, "total_segments": len(segments), "cached_calls": 0}
+                "completed_segments": 0, "total_segments": len(segments), "cached_calls": 0,
+                "attempted_calls": 0}
     results, finished, cached_nodes = {}, [], set()
     state, error, final_result = "completed", None, None
+    error_detail, location = None, {}
 
     def publish():
         with a._LOCK:
@@ -245,7 +253,12 @@ def execute(root, config, key, prepared, job, retry_uncertain=False):
 
     def invoke_node(node, callback):
         gate()
-        result, cached = _call(root, node, config, job_id, retry_uncertain, prepared["approved_calls"], callback)
+        def attempt():
+            # Dispatch attempts are not a claim that the provider received or billed them.
+            progress["attempted_calls"] += 1
+            publish()
+            return callback()
+        result, cached = _call(root, node, config, job_id, retry_uncertain, prepared["approved_calls"], attempt)
         results[node["key"]] = result
         progress["completed_calls"] += 1
         if cached:
@@ -255,6 +268,8 @@ def execute(root, config, key, prepared, job, retry_uncertain=False):
     try:
         publish()
         for segment in segments:
+            location = {"phase": "segment", "segment_index": segment["index"],
+                        "call_index": progress["completed_calls"] + 1}
             stats = {"scope_messages": len(segment["sample"]),
                      "me_messages": sum(row["sender"] == "我" for row in segment["sample"]),
                      "other_messages": sum(row["sender"] != "我" for row in segment["sample"]),
@@ -273,6 +288,7 @@ def execute(root, config, key, prepared, job, retry_uncertain=False):
             progress["stage"] = "merge"
             publish()
             for node in level:
+                location = {"phase": "merge", "call_index": progress["completed_calls"] + 1}
                 packets = [_compact_packet(child, results[child["key"]]) for child in node["children"]]
                 def merge(packets=packets, node=node):
                     value = a._cloud_merge(config, key, prepared["scope"], packets)
@@ -289,6 +305,8 @@ def execute(root, config, key, prepared, job, retry_uncertain=False):
     except Exception as exc:
         state = "error"
         error = str(exc) if isinstance(exc, a.AnalysisError) else "分段分析未完成；可能已计费，不会自动重试"
+        detail = exception_detail(exc)
+        error_detail = public_error_detail({**detail, **location}) if detail else None
 
     report_id = None
     if final_result is not None or finished:
@@ -323,6 +341,9 @@ def execute(root, config, key, prepared, job, retry_uncertain=False):
                                 "state": "completed" if segment in finished else "not_completed",
                                 "cached": segment["key"] in cached_nodes,
                                 "summary": results.get(segment["key"], {}).get("summary", "")[:240]} for segment in segments]}
+        if error_detail:
+            report["error_detail"] = error_detail
+            report["failed_segment"] = error_detail.get("segment_index")
         a._write(root / f"report-{report_id}.json", report)
     progress["stage"] = "completed" if state == "completed" else progress["stage"]
     output = {**job, "state": state, "progress": progress}
@@ -332,5 +353,7 @@ def execute(root, config, key, prepared, job, retry_uncertain=False):
         output["result"] = final_result
     if error:
         output["error"] = error
+    if error_detail:
+        output["error_detail"] = error_detail
     a._write(root / f"job-{job_id}.json", output)
     return output
