@@ -4,6 +4,10 @@
 
 2026-09-07：[项目解构](docs/project-decomposition.md)已形成[需求池 R2](BACKLOG.md)。首轮范围确认是 v0.1.1 的 UX-01 至 UX-05；后续 UI、来源适配、任务状态和操作系统兼容按独立需求验收，不把规划等同于实现。
 
+## v0.1.6 候选：联系密度月历 / 全年
+
+[UI-04 / #32](https://github.com/weihaoting123-ctrl/human-online-relationships/issues/32)：时间线中的红色日热度、默认单月和全年月份下钻；准确逐日统计、旧报告兼容。范围与非目标见 [计划](docs/plans/2026-09-15-density-calendar.md)，发布需另核验 CI、前序候选和 Release，不能等同整个工作台重组完成。
+
 ## v0.1.1：首次导入与导航修复
 
 对应 [里程碑 3](https://github.com/weihaoting123-ctrl/human-online-relationships/milestone/3)、[#12](https://github.com/weihaoting123-ctrl/human-online-relationships/issues/12) 和 [#13](https://github.com/weihaoting123-ctrl/human-online-relationships/issues/13)。本轮实现文件来源一致、导入结果可达、空状态区分、导航焦点和稳定错误提示，不重构持久化和采集路径。
