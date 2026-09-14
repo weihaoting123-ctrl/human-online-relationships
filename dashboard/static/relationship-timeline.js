@@ -93,32 +93,9 @@
     return [...localEvents, ...aiEvents];
   }
   function density(target, local) {
-    const weekly = (Array.isArray(local?.frequency?.weekly) ? local.frequency.weekly : [])
-      .filter((week) => day(week.week_start)).slice().sort((a, b) => a.week_start.localeCompare(b.week_start));
-    if (!weekly.length) { target.append(el('p', 'rt-note', '这个范围没有可绘制的周频率数据。')); return; }
     const figure = el('figure', 'rt-density');
-    const caption = el('figcaption');
-    caption.append(el('strong', '', '联系密度'), el('span', '', `每周消息 · 高频阈值 ${count(local.frequency.threshold)} 条`));
-    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-    svg.setAttribute('viewBox', '0 0 800 64'); svg.setAttribute('preserveAspectRatio', 'none');
-    svg.setAttribute('role', 'img'); svg.setAttribute('aria-label', `所选范围每周消息密度；${weekly.length} 个已显示活跃周，深色表示高频。不代表感情强度。`);
-    const first = Date.parse(day(weekly[0].week_start)), last = Date.parse(day(weekly.at(-1).week_start));
-    const span = Math.max(604800000, last - first + 604800000);
-    const max = Math.max(1, ...weekly.map((week) => Number(week.count) || 0));
-    weekly.forEach((week) => {
-      const rect = document.createElementNS(svg.namespaceURI, 'rect');
-      const height = Math.max(2, Math.min(60, (Number(week.count) || 0) / max * 60));
-      const width = Math.max(.7, 604800000 / span * 800 - 3);
-      [['x', (Date.parse(day(week.week_start)) - first) / span * 800], ['y', 64 - height], ['width', width], ['height', height], ['rx', Math.min(3, width / 2)]]
-        .forEach(([key, value]) => rect.setAttribute(key, String(value)));
-      rect.setAttribute('class', week.frequent ? 'rt-frequent' : '');
-      const title = document.createElementNS(svg.namespaceURI, 'title');
-      title.textContent = `${week.week_start} 起一周 · ${count(week.count)} 条${week.frequent ? ' · 高频' : ''}`;
-      rect.append(title); svg.append(rect);
-    });
-    const endpoints = el('div', 'rt-density-dates');
-    endpoints.append(el('span', '', weekly[0].week_start), el('span', '', weekly.at(-1).week_start));
-    figure.append(caption, svg, endpoints, el('p', 'rt-note', '频率只反映归档中的互动密度，不等于感情强度。空白可能表示没有记录或数据未返回。'));
+    if (window.DensityCalendar) window.DensityCalendar.render(figure, local);
+    else figure.append(el('strong', '', '联系密度'), el('p', 'rt-note', '日历模块未加载，请刷新页面。'));
     target.append(figure);
   }
   function renderList(view) {
