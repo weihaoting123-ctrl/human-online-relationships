@@ -1,0 +1,38 @@
+/* Uses the existing light/dark semantic palette. No external assets. */
+.chart-probe-host { position: relative; min-width: 0; }
+.chart-probe-target { touch-action: pan-y; }
+svg.chart-probe-target { min-height: 160px; cursor: crosshair; }
+.chart-probe-target:focus-visible { outline: 2px solid var(--focus-ring, #0066cc); outline-offset: 3px; border-radius: 8px; }
+.chart-probe-layer { pointer-events: none; }
+.chart-probe-dock { display: none; }
+.chart-probe-guide { stroke: var(--text-secondary, #606068); stroke-width: 1; stroke-dasharray: 3 4; vector-effect: non-scaling-stroke; }
+.chart-probe-dot { fill: var(--surface-card, #fff); stroke: var(--accent, #0066cc); stroke-width: 2; vector-effect: non-scaling-stroke; }
+.chart-probe-dot.chart-probe-other { stroke: var(--success, #236c50); }
+.chart-probe-tooltip {
+  position: absolute; z-index: 8; box-sizing: border-box; width: max-content;
+  min-width: 0; max-width: calc(100% - 16px); padding: 11px 13px;
+  border: 1px solid var(--border-subtle, #d8d8de); border-radius: 12px;
+  background: var(--surface-card, #fff); color: var(--text-primary, #1d1d1f);
+  box-shadow: 0 6px 24px rgb(0 0 0 / 13%); font: 13px/1.5 var(--body, system-ui);
+  pointer-events: auto; touch-action: pan-y; transition: opacity 90ms ease;
+}
+.chart-probe-tooltip[hidden] { display: none !important; }
+.chart-probe-title { display: block; font-size: 13px; font-weight: 600; margin: 0 0 6px; overflow-wrap: anywhere; }
+.chart-probe-values { margin: 0; padding: 0; }
+.chart-probe-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: baseline; gap: 16px; margin: 3px 0; }
+.chart-probe-row dt { position: relative; margin: 0; color: var(--text-secondary, #606068); overflow-wrap: anywhere; }
+.chart-probe-row dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.chart-probe-row.chart-probe-me dt, .chart-probe-row.chart-probe-other dt { padding-left: 12px; }
+.chart-probe-row.chart-probe-me dt::before, .chart-probe-row.chart-probe-other dt::before { content: ''; position: absolute; left: 0; top: .65em; width: 6px; height: 6px; border-radius: 50%; background: var(--accent, #0066cc); }
+.chart-probe-row.chart-probe-other dt::before { background: var(--success, #236c50); }
+.chart-probe-row-active { outline: 1px solid var(--border-control, #85858e); outline-offset: 3px; border-radius: 4px; }
+.chart-probe-sr { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
+@media (prefers-reduced-motion: reduce) { .chart-probe-tooltip { transition: none; } }
+@media (max-width: 600px) {
+  .chart-probe-dock { display: block; height: 140px; }
+}
+@media (forced-colors: active) {
+  .chart-probe-tooltip { background: Canvas; color: CanvasText; border-color: CanvasText; }
+  .chart-probe-guide, .chart-probe-dot { stroke: CanvasText; }
+  .chart-probe-dot { fill: Canvas; }
+}
