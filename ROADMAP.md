@@ -4,6 +4,10 @@
 
 2026-09-07：[项目解构](docs/project-decomposition.md)已形成[需求池 R2](BACKLOG.md)。首轮范围确认是 v0.1.1 的 UX-01 至 UX-05；后续 UI、来源适配、任务状态和操作系统兼容按独立需求验收，不把规划等同于实现。
 
+## v0.1.7 候选：分析格式与安全诊断
+
+[AI-04 / #34](https://github.com/weihaoting123-ctrl/human-online-relationships/issues/34)：分段/汇总独立输出契约、字段级本机错误说明与尝试计数、合法事件汇总兼容。只做合成验证，不自动重新分析。提示版本升级后的范围、调用计划与可能重复计费必须重新确认。见 [计划](docs/plans/2026-09-15-analysis-output-diagnostics.md) 与 [验证记录](docs/reviews/v0.1.7-review.md)；正式发布需核验本轮 CI 和前序候选。
+
 ## v0.1.6 候选：联系密度月历 / 全年
 
 [UI-04 / #32](https://github.com/weihaoting123-ctrl/human-online-relationships/issues/32)：时间线中的红色日热度、默认单月和全年月份下钻；准确逐日统计、旧报告兼容。范围与非目标见 [计划](docs/plans/2026-09-15-density-calendar.md)，发布需另核验 CI、前序候选和 Release，不能等同整个工作台重组完成。
