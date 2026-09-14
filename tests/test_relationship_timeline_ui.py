@@ -21,6 +21,9 @@ def local_timeline():
         'scope': {'date_from': '2026-01-01', 'date_to': '2026-02-28', 'message_count': 124,
                   'first_record_at': '2026-01-01T12:00:00+08:00', 'last_record_at': '2026-02-28T12:00:00+08:00'},
         'frequency': {'week_start': 'monday', 'threshold': 20, 'baseline_active_week_median': 8,
+                      'daily': [{'date': '2026-01-12', 'count': 106}, {'date': '2026-02-28', 'count': 18}],
+                      'daily_coverage': {'complete': True, 'date_from': '2026-01-01', 'date_to': '2026-02-28',
+                                         'timezone': 'server_local', 'basis': 'selected_scope_non_system_non_future'},
                       'active_weeks': 8, 'weekly': [
                           {'week_start': (datetime(2025, 12, 29) + timedelta(weeks=i)).date().isoformat(),
                            'count': count, 'frequent': count >= 20}
@@ -152,6 +155,31 @@ class RelationshipTimelineBrowserTests(unittest.TestCase):
         self.assertEqual(self.page.title(), '人类线上关系可视化')
         self.expect(self.page.locator('.brand-name')).to_have_text('人类线上关系可视化')
         self.expect(self.page.locator('.brand-lockup')).to_have_attribute('aria-label', '人类线上关系可视化首页')
+
+    def test_density_calendar_in_detail_preview_and_saved_report(self):
+        self.open_detail()
+        target = self.page.locator('#relationship-timeline')
+        self.expect(target.locator('.dc-day')).to_have_count(28)
+        self.expect(target.locator('.dc-summary')).to_contain_text('18 条')
+        target.get_by_role('button', name='年视图').click()
+        self.expect(target.locator('.dc-month')).to_have_count(12)
+        self.page.locator('[data-view="analysis-workspace"]').click()
+        self.page.locator('#ai-bundle').select_option('fixture-0')
+        self.page.locator('#ai-preview-button').click()
+        ai = self.page.locator('#ai-relationship-timeline')
+        self.expect(ai.locator('.dc-day')).to_have_count(28)
+        self.page.locator('#ai-history-list .history-item').click()
+        self.expect(ai.locator('.dc-summary')).to_contain_text('18 条')
+        self.expect(self.page.locator('#ai-consent')).not_to_be_checked()
+
+    def test_legacy_daily_snapshot_is_not_requeried_or_invented(self):
+        del self.local['frequency']['daily']
+        del self.local['frequency']['daily_coverage']
+        self.open_report()
+        target = self.page.locator('#ai-relationship-timeline')
+        self.expect(target.locator('.dc-unavailable')).to_contain_text('逐日统计')
+        self.expect(target.locator('.dc-day')).to_have_count(0)
+        self.assertEqual(self.fixture.mutations, [])
 
     def test_type_filter_and_reverse_order(self):
         self.open_detail()
@@ -375,14 +403,14 @@ class RelationshipTimelineBrowserTests(unittest.TestCase):
         self.assertLessEqual(self.page.evaluate('document.documentElement.scrollWidth'), 321)
 
     def test_methodology_is_collapsed_but_truncation_stays_visible(self):
-        self.assertEqual(len(self.local['notices']), 10)
+        self.assertEqual(len(self.local['notices']), len(NOTICES))
         self.local['limits']['nodes'].update(total=100, truncated=True)
         self.open_detail()
         target = self.page.locator('#relationship-timeline')
         details = target.locator('details.rt-methodology')
         self.expect(details.locator('summary')).to_have_text('统计口径与覆盖说明')
         self.expect(details).not_to_have_attribute('open', '')
-        self.expect(details.locator('p')).to_have_count(10)
+        self.expect(details.locator('p')).to_have_count(len(NOTICES))
         self.expect(details.locator('p').first).to_be_hidden()
         self.expect(target.locator('.rt-coverage')).to_be_visible()
         details.locator('summary').click()
