@@ -1,6 +1,6 @@
 # 项目需求池
 
-需求池修订：R4 · 2026-09-10。初始审查基线 `94180d0` / 软件版本 `0.1.0`。R2 记录首轮实施与验收，R3 选择 DATA-01 第一阶段，R4 纳入用户指定聊天热度；需求文档修订不是软件 Release。
+需求池修订：R5 · 2026-09-15。初始审查基线 `94180d0` / 软件版本 `0.1.0`。R2 记录首轮实施与验收，R3 选择 DATA-01 第一阶段，R4 纳入用户指定聊天热度，R5 纳入图表吸附读数；需求文档修订不是软件 Release。
 
 目标：把本机聊天档案变成可检索、可回顾、范围明确的线上关系时间线。原始数据只读、云分析按次确认；不推断真实动机、不绘制未经确认的人际身份网络。
 
@@ -37,6 +37,14 @@
 单会话本机聊天热度，P2。[主 Issue #25](https://github.com/weihaoting123-ctrl/human-online-relationships/issues/25) · [里程碑](https://github.com/weihaoting123-ctrl/human-online-relationships/milestone/5) · [设计](docs/superpowers/specs/2026-09-10-chat-heatmap-design.md)。
 
 验收范围：月历、星期/小时分布、活跃日排行、90 天默认及 366 天内显式范围、完整聚合口径、无正文 DTO、只读与迟到响应保护、小屏/键盘/深色合成回归。实现进入 v0.1.3，发布状态以对应 Release/CI 为准；不把 B 批工作台重组、DEMO-01 或 A11Y-01 标成完成。不自动升级私人运行部署。
+
+### 用户指定独立迭代：UI-03 / v0.1.5 候选
+
+图表吸附读数，P2，待验收。[主 Issue #29](https://github.com/weihaoting123-ctrl/human-online-relationships/issues/29) · [设计](docs/superpowers/specs/2026-09-15-chart-probe-design.md) · [验证记录](docs/reviews/v0.1.5-review.md)。
+
+范围：会话日轨迹、小时及双边横条，分析报告的聚合图；鼠标最近点、触摸、键盘、完整日期、真实零值、浮层边界及销毁。复用原生 SVG/HTML 和主题，不引入图表库。只读页面聚合，不增加聊天读取或 AI 请求。现有热力格和周时间条不在本轮改动范围；不将 B 批工作台、辅助技术人工验收或其他平台适配标为完成。候选基于 v0.1.4；私人部署仅补对应静态交互，不整体迁移其他版本。
+
+回归中另发现备份状态误报竞态，独立记录 [#30](https://github.com/weihaoting123-ctrl/human-online-relationships/issues/30)，不混入 UI 补丁，也不因图表验收而关闭。
 
 | ID | 需求 / 优先级 | 完成条件 | 依赖 / 已有 Issue |
 | --- | --- | --- | --- |
