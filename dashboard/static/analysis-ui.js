@@ -14,6 +14,33 @@
   const send = (path, body) => api(path, { method: 'POST', body: JSON.stringify(body) });
   const byId = (id) => bundles.find((bundle) => bundle.id === id);
   const contact = (id) => byId(id) ? displayName(byId(id)) : '所选会话';
+  const outputErrorCodes = new Set([
+    'OUTPUT_FIELDS', 'OUTPUT_TYPE', 'OUTPUT_LIMIT', 'OUTPUT_ENUM', 'OUTPUT_DATE',
+    'OUTPUT_DATE_SCOPE', 'OUTPUT_EVIDENCE_REF', 'OUTPUT_EVIDENCE_DUP', 'OUTPUT_EVIDENCE_RANGE',
+    'OUTPUT_EVIDENCE_REQUIRED', 'OUTPUT_STATE', 'OUTPUT_ID', 'OUTPUT_DUPLICATE_ID', 'OUTPUT_LINK',
+    'OUTPUT_MERGE_CHANGED', 'OUTPUT_REASON_CHANGED', 'OUTPUT_JSON', 'OUTPUT_INCOMPLETE', 'OUTPUT_RESPONSE',
+  ]);
+  // Mirror the public schema paths; never render arbitrary detail keys or prose.
+  const outputErrorField = /^(?:response|report|summary|observations|actions|caveats|timeline(?:\.(?:version|generated|coverage|events_total|events_truncated|events(?:\[\d{1,4}\](?:\.(?:id|date_from|date_to|kind|title|summary|status|evidence_level|related_event_id|evidence(?:\[\d\](?:\.(?:date|sample_index))?)?))?)?|no_contact_reason(?:\.(?:kind|summary|evidence(?:\[\d\](?:\.(?:date|sample_index))?)?|limitations(?:\[\d\])?))?))?)$/;
+  const validIndex = (value, maximum) => Number.isInteger(value) && value >= 1 && value <= maximum;
+  function diagnosticContext(detail, legacySegment) {
+    const field = detail?.field;
+    const valid = outputErrorCodes.has(detail?.code) && typeof field === 'string' && outputErrorField.test(field)
+      && [...field.matchAll(/\[(\d+)\]/g)].every((match) => Number(match[1]) < 1200)
+      && [...field.matchAll(/(?:evidence|limitations)\[(\d+)\]/g)].every((match) => Number(match[1]) < 3);
+    const context = [];
+    if (valid && detail.phase === 'merge') context.push('汇总');
+    else if (valid && detail.phase === 'segment') context.push(validIndex(detail.segment_index, 200) ? `第 ${number(detail.segment_index)} 段` : '分段分析');
+    else if (validIndex(legacySegment, 200)) context.push(`第 ${number(legacySegment)} 段`);
+    if (valid && validIndex(detail.call_index, 400)) context.push(`第 ${number(detail.call_index)} 次计划调用`);
+    return context.length ? `（${context.join(' · ')}）` : '';
+  }
+  function failureReason(message, detail, legacySegment) {
+    // The API supplies locally authored error text. Ignore detail.message, and
+    // keep the retry warning in one place instead of repeating its API suffix.
+    const reason = message.trim().replace(/[；。]?(?:本次)?不会自动重试[。]?$/, '').replace(/[。；\s]+$/, '');
+    return `${reason}${diagnosticContext(detail, legacySegment)}。已完成分段保留在本机；已发出的请求仍可能产生费用，本次不会自动重试。`;
+  }
   function feedback(message = '', error = false) {
     const node = $('#ai-feedback');
     node.textContent = message; node.hidden = !message;
@@ -144,7 +171,7 @@
     const remainingSegments = Math.max(0, Number(coverage?.total_segments || 0) - Number(coverage?.completed_segments || 0));
     $('#ai-result-status').textContent = partial ? `${mode === 'full' ? '全量计划 · 部分完成。' : ''}部分结果：已完成 ${number(coverage.completed_segments)} / ${number(coverage.total_segments)} 段；还有 ${number(remainingMessages)} 条文字、${number(remainingSegments)} 段未完成。${remainingSegments === 0 ? '分段已完成，汇总尚未完成。' : '后续分段或汇总未完成。'}不能视为完整范围的结论。` : '';
     $('#ai-result-recovery').hidden = !partial;
-    $('#ai-result-stop-reason').textContent = partial ? `停止原因：${typeof report.stop_reason === 'string' && report.stop_reason ? report.stop_reason : '这份历史报告未记录具体原因，已完成分段仍保留在本机。'}${Number.isInteger(report.failed_segment) ? `（第 ${number(report.failed_segment)} 段）` : ''}` : '';
+    $('#ai-result-stop-reason').textContent = partial ? `停止原因：${failureReason(typeof report.stop_reason === 'string' && report.stop_reason ? report.stop_reason : '这份历史报告未记录具体原因', report.error_detail, report.failed_segment)}` : '';
     AnalysisCharts.renderCoverage($('#ai-result-coverage'), { eligible: coverage?.eligible_messages, analyzed: coverage?.analyzed_messages ?? report.sample_messages, segments: coverage?.total_segments ?? report.plan?.segments, completed: coverage?.completed_segments, mode });
     if (partial && mode === 'full') $('#ai-result-coverage .ai-coverage-label strong').textContent = '全量计划 · 部分完成';
     AnalysisCharts.renderSegments($('#ai-result-segments'), report.segments);
@@ -282,7 +309,7 @@
       const callPlan = $('#ai-call-plan'); callPlan.replaceChildren();
       callPlan.append(el('strong', '', `${number(plan.segments)} 段 · ${number(plan.new_calls)} 次新调用`));
       callPlan.append(el('p', 'field-note', `计划共 ${number(plan.total_calls)} 次调用，其中 ${number(plan.cached_calls)} 次可复用已完成结果，${number(plan.merge_calls)} 次用于汇总。${plan.estimated_input_tokens === undefined ? '' : `输入约 ${number(plan.estimated_input_tokens)} tokens；每次输出上限 ${number(plan.output_token_limit)} tokens。`}`));
-      callPlan.append(el('p', 'field-note', '多次调用可能分别计费。token 数是近似值，实际费用以服务商计费为准。已完成分段只在重新核对并确认后复用，不会自动补跑。'));
+      callPlan.append(el('p', 'field-note', '多次调用可能分别计费。token 数是含格式提示的粗估，实际费用以服务商计费为准。已完成分段只在重新核对并确认后复用，不会自动补跑。提示版本变化后，旧缓存可能无法复用，重新分析可能重复计费。'));
       (Array.isArray(plan.warnings) ? plan.warnings : []).forEach((warning) => callPlan.append(el('p', 'field-note', String(warning))));
       $('#ai-retry-line').hidden = !(Number(plan.blocked_calls) > 0);
       $('#ai-retry-uncertain').checked = false;
@@ -303,18 +330,24 @@
     const plan = job.plan || activeJob?.plan || {};
     const scope = job.scope || activeJob?.scope || {};
     const stateNames = { pending: '等待中', running: '进行中', completed: '已完成', error: '未完成', cancelled: '已停止' };
-    const stageNames = { segments: '按时间顺序分析分段', merge: '分段完成，正在汇总', completed: '分析结束' };
+    const merging = value.stage === 'merge' && ['pending', 'running'].includes(job.state);
+    const stoppedMerge = value.stage === 'merge' && ['error', 'cancelled'].includes(job.state);
+    const stageNames = { segments: '按时间顺序分析分段', merge: stoppedMerge ? '分段完成，汇总未完成' : '分段完成，正在汇总', completed: '分析结束' };
     $('#ai-job-progress').hidden = false; $('#ai-placeholder').hidden = true;
-    $('#ai-progress-title').textContent = stageNames[value.stage] || '等待分析开始';
+    $('#ai-progress-title').textContent = job.state === 'completed' ? '分析结束' : stageNames[value.stage] || '等待分析开始';
     $('#ai-progress-state').textContent = cancelRequested ? '正在停止' : stateNames[job.state] || '检查中';
     $('#ai-progress-scope').textContent = `${contact(scope.bundle_id)} · ${scope.date_from || ''} — ${scope.date_to || ''} · ${modeName(plan.mode || scope.analysis_mode)}`;
     const total = Number(value.total_segments ?? plan.segments) || 1;
     $('#ai-progress-bar').max = total;
     $('#ai-progress-bar').value = Number(value.completed_segments) || 0;
-    $('#ai-progress-detail').textContent = `分段 ${number(value.completed_segments)} / ${number(total)} · 调用 ${number(value.completed_calls)} / ${number(value.total_calls ?? plan.total_calls)} · 已复用 ${number(value.cached_calls ?? plan.cached_calls)} 次。${value.stage === 'merge' ? '正在整合分段结果。' : ''}`;
-    $('#ai-progress-note').textContent = cancelRequested
+    const attempts = Number.isSafeInteger(value.attempted_calls) && value.attempted_calls >= 0
+      ? `新调用尝试 ${number(value.attempted_calls)} 次` : '尝试次数未记录';
+    $('#ai-progress-detail').textContent = `分段 ${number(value.completed_segments)} / ${number(total)} · 已完成调用（含复用）${number(value.completed_calls)} / ${number(value.total_calls ?? plan.total_calls)} · ${attempts} · 已复用 ${number(value.cached_calls ?? plan.cached_calls)} 次。${merging ? '正在整合分段结果。' : stoppedMerge ? '汇总未完成。' : ''}`;
+    const note = cancelRequested
       ? '已请求停止。当前请求可能仍在完成，此后不再发起新调用；已发出的请求仍可能产生费用。'
-      : '每段完成后保存在本机。停止会等待当前请求结束，再取消后续调用；不会自动重试失败请求。';
+      : job.state === 'error' ? '本次分析已停止。'
+        : '每段完成后保存在本机。停止会等待当前请求结束，再取消后续调用；不会自动重试失败请求。';
+    $('#ai-progress-note').textContent = `${note}尝试次数只记录本机发起新调用的尝试，不代表已送达或已计费。`;
     $('#ai-cancel-job').disabled = cancelRequested || !['pending', 'running'].includes(job.state);
   }
   function watch(job, recovered = false) {
@@ -349,7 +382,7 @@
         $('#ai-resume-poll').hidden = true;
         const message = job.state === 'completed' ? '分析完成，报告已保存在本机。'
           : job.state === 'cancelled' ? '已停止后续调用。已完成分段保留在本机；没有自动重试。'
-            : `${job.error || '分析未完成。'} 已完成分段保留在本机；不会自动重试。`;
+            : failureReason(typeof job.error === 'string' && job.error ? job.error : '分析未完成', job.error_detail, job.failed_segment);
         feedback(message, job.state === 'error');
         if (job.report_id) await loadReport(job.report_id);
         else if (job.state === 'completed') renderResult(job);
