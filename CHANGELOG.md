@@ -6,6 +6,18 @@
 
 下一版本候选见 [ROADMAP](ROADMAP.md)。候选不代表已经实现，也不是发布日期承诺。
 
+## 0.1.7 — 待发布 · 分析格式约束与具体错误提示
+
+追踪 [AI-04 / #34](https://github.com/weihaoting123-ctrl/human-online-relationships/issues/34)，基于 v0.1.6 候选；不代表已合并或正式 Release。
+
+- 直接分析与分段汇总使用独立 JSON 契约及完整虚构示例，明确证据配对、状态、日期、关联和不可变字段。
+- 区分响应结构、JSON、输出未完成及具体字段校验错误；仅保留固定错误码、schema 位置和本机说明，不保存失败响应正文。
+- 任务与部分报告显示出错阶段，分开成功完成、复用和尝试次数；旧记录未保存的细节不补猜，不自动重试。
+- 修复合法分段事件在汇总时因端点不在证据日期中被误拒绝的问题；保持证据来源与不可变事件校验。
+- 预览预算纳入实际格式提示长度，说明提示升级可能导致旧缓存无法复用和重新计费；旧预览必须重新确认。
+
+本轮不调用真实模型、不改模型连接或聊天资料。详见 [计划](docs/plans/2026-09-15-analysis-output-diagnostics.md) 与 [验证记录](docs/reviews/v0.1.7-review.md)。
+
 ## 0.1.6 — 待发布 · 联系密度日历
 
 追踪 [UI-04 / #32](https://github.com/weihaoting123-ctrl/human-online-relationships/issues/32)，基于 v0.1.5 候选；CI、基线合并及 Release 核验前不标为正式发布。
