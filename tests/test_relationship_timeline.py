@@ -79,6 +79,128 @@ class RelationshipTimelineTests(unittest.TestCase):
         self.assertEqual(result["last_contact"]["elapsed_days"], 3)
         self.assertEqual(result["nodes"], [])
 
+    def test_daily_counts_are_sorted_sparse_and_use_the_selected_scope(self):
+        rows = [message(datetime(2026, 9, 5, 10)), message(datetime(2026, 9, 2, 9)),
+                message(datetime(2026, 9, 5, 11), "other"),
+                message(datetime(2026, 9, 1)), message(datetime(2026, 9, 6))]
+        result = self.build(rows, {"date_from": "2026-09-02", "date_to": "2026-09-05"})
+        self.assertIn("daily", result["frequency"])
+        self.assertEqual(result["frequency"]["daily"], [
+            {"date": "2026-09-02", "count": 1}, {"date": "2026-09-05", "count": 2},
+        ])
+        self.assertEqual(sum(day["count"] for day in result["frequency"]["daily"]),
+                         result["scope"]["message_count"])
+
+    def test_daily_counts_preserve_system_future_and_invalid_exclusions(self):
+        rows = [message(self.now, kind=kind) for kind in
+                ("text", "image", "voice", "video", "emoji", "file", "other")]
+        rows += [message(self.now, kind="system"), message(self.now, sender="system"),
+                 message(self.now + timedelta(microseconds=1)), message("bad"), None,
+                 message(datetime(1999, 12, 31)), message(datetime(2101, 1, 1))]
+        result = self.build(rows)
+        self.assertIn("daily", result["frequency"])
+        self.assertEqual(result["frequency"]["daily"], [{"date": "2026-09-06", "count": 7}])
+        self.assertEqual(result["scope"]["message_count"], 7)
+        self.assertEqual(result["excluded"], {"invalid_timestamp": 4, "future_timestamp": 1,
+                                              "system_messages": 2})
+
+    def test_daily_coverage_uses_explicit_bounds_and_caps_future_end_at_local_clock(self):
+        result = self.build([message(datetime(2026, 9, 3))],
+                            {"date_from": "2026-09-01", "date_to": "2026-09-30"})
+        self.assertIn("daily_coverage", result["frequency"])
+        self.assertEqual(result["frequency"]["daily_coverage"], {
+            "complete": True, "date_from": "2026-09-01", "date_to": "2026-09-06",
+            "timezone": "server_local", "basis": "selected_scope_non_system_non_future",
+        })
+        historical = self.build([], {"date_from": "2024-01-01", "date_to": "2024-01-31"})
+        self.assertEqual(historical["frequency"]["daily_coverage"]["date_to"], "2024-01-31")
+
+    def test_daily_coverage_starts_at_first_valid_scoped_day_when_start_is_unspecified(self):
+        rows = [message(datetime(2024, 1, 1), kind="system"), message(datetime(2026, 9, 5)),
+                message(datetime(2026, 9, 3)), message(self.now + timedelta(days=1))]
+        result = self.build(rows)
+        self.assertIn("daily_coverage", result["frequency"])
+        self.assertEqual(result["frequency"]["daily_coverage"]["date_from"], "2026-09-03")
+        self.assertEqual(result["frequency"]["daily_coverage"]["date_to"], "2026-09-06")
+        self.assertTrue(any("每日" in notice and "本机" in notice and "0" in notice
+                            for notice in result["notices"]))
+
+    def test_empty_daily_coverage_uses_explicit_start_or_capped_end(self):
+        cases = [({}, "2026-09-06", "2026-09-06"),
+                 ({"date_to": "2024-02-29"}, "2024-02-29", "2024-02-29"),
+                 ({"date_from": "2024-02-01", "date_to": "2024-02-29"}, "2024-02-01", "2024-02-29")]
+        for scope, start, end in cases:
+            for rows in ([], [message(self.now, kind="system")],
+                         [message(self.now + timedelta(days=1))]):
+                with self.subTest(scope=scope, rows=rows):
+                    result = self.build(rows, scope)
+                    self.assertIn("daily", result["frequency"])
+                    self.assertEqual(result["frequency"]["daily"], [])
+                    self.assertEqual(result["frequency"]["daily_coverage"], {
+                        "complete": True, "date_from": start, "date_to": end,
+                        "timezone": "server_local", "basis": "selected_scope_non_system_non_future",
+                    })
+        outside = self.build([message(self.now)], {"date_to": "2024-02-29"})
+        self.assertIn("daily", outside["frequency"])
+        self.assertEqual(outside["frequency"]["daily"], [])
+        self.assertEqual(outside["frequency"]["daily_coverage"]["date_from"], "2024-02-29")
+
+    def test_daily_coverage_has_null_bounds_when_scope_has_no_supported_past_day(self):
+        for scope in ({"date_from": "2027-01-01"},
+                      {"date_from": "1999-01-01", "date_to": "1999-12-31"},
+                      {"date_from": "2101-01-01", "date_to": "2102-01-01"}):
+            with self.subTest(scope=scope):
+                result = self.build([message(self.now)], scope)
+                self.assertIn("daily_coverage", result["frequency"])
+                self.assertEqual(result["frequency"]["daily"], [])
+                self.assertEqual(result["frequency"]["daily_coverage"], {
+                    "complete": True, "date_from": None, "date_to": None,
+                    "timezone": "server_local", "basis": "selected_scope_non_system_non_future",
+                })
+
+    def test_daily_counts_use_server_local_leap_day_for_numeric_and_aware_timestamps(self):
+        start = datetime(2024, 2, 29)
+        end = datetime(2024, 3, 1)
+        rows = [message(start), message(start.timestamp() * 1000),
+                message(start.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")),
+                message(start.astimezone(timezone(timedelta(hours=-7))).isoformat()),
+                message(end - timedelta(microseconds=1)), message(end)]
+        result = self.build(rows, {"date_from": "2024-02-29", "date_to": "2024-02-29"},
+                            now=end.astimezone(timezone.utc))
+        self.assertIn("daily", result["frequency"])
+        self.assertEqual(result["frequency"]["daily"], [{"date": "2024-02-29", "count": 5}])
+        self.assertEqual(result["frequency"]["daily_coverage"]["date_from"], "2024-02-29")
+        self.assertEqual(result["frequency"]["daily_coverage"]["date_to"], "2024-02-29")
+
+    def test_daily_history_is_untruncated_when_weekly_history_is_capped(self):
+        start = datetime(2000, 1, 3, 12)
+        rows = [message(start + timedelta(weeks=week)) for week in range(600)]
+        rows.append(message(datetime(2100, 12, 31, 12)))
+        result = self.build(list(reversed(rows)),
+                            {"date_from": "0001-01-01", "date_to": "9999-12-31"},
+                            now=datetime(2101, 1, 1))
+        self.assertIn("daily", result["frequency"])
+        self.assertEqual(len(result["frequency"]["daily"]), 601)
+        self.assertEqual(result["frequency"]["daily"][0], {"date": "2000-01-03", "count": 1})
+        self.assertEqual(result["frequency"]["daily"][-1], {"date": "2100-12-31", "count": 1})
+        self.assertEqual(sum(day["count"] for day in result["frequency"]["daily"]),
+                         result["scope"]["message_count"])
+        self.assertTrue(result["limits"]["weekly"]["truncated"])
+        self.assertEqual(result["frequency"]["daily_coverage"]["date_from"], "2000-01-01")
+        self.assertEqual(result["frequency"]["daily_coverage"]["date_to"], "2100-12-31")
+
+    def test_daily_fields_only_expose_allowlisted_aggregate_values(self):
+        marker = "SYNTHETIC-PRIVATE-CONTENT-IDENTITY-MEDIA-PATH"
+        row = message(self.now, sender=marker, content=marker, sender_id=marker,
+                      media={"path": marker}, path=marker, date=marker, count=marker)
+        result = self.build([row], {"bundle_id": marker})
+        self.assertIn("daily", result["frequency"])
+        self.assertEqual(result["version"], 1)
+        self.assertEqual(set(result["frequency"]["daily"][0]), {"date", "count"})
+        self.assertEqual(set(result["frequency"]["daily_coverage"]),
+                         {"complete", "date_from", "date_to", "timezone", "basis"})
+        self.assertNotIn(marker, json.dumps(result, allow_nan=False))
+
     def test_future_invalid_and_system_records_never_advance_last_contact(self):
         last = self.now - timedelta(days=5)
         rows = [message(last), message(self.now - timedelta(seconds=1), kind="system"),
