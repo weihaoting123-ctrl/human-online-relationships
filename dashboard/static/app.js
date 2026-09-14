@@ -376,8 +376,17 @@ function smoothPath(points) {
   return path;
 }
 
+function messageProbeRows(mine, theirs) {
+  return [
+    { label: '你', value: `${number(mine)} 条`, tone: 'me' },
+    { label: '对方 / 其他成员', value: `${number(theirs)} 条`, tone: 'other' },
+    { label: '合计', value: `${number(Number(mine || 0) + Number(theirs || 0))} 条` },
+  ];
+}
+
 function renderPulseChart(daily = []) {
   const svg = $('#pulse-chart');
+  window.ChartProbe?.detach(svg);
   svg.replaceChildren();
   $('#chart-empty').hidden = daily.length > 0;
   const summary = $('#chart-summary');
@@ -426,6 +435,15 @@ function renderPulseChart(daily = []) {
     text.textContent = daily[index].date.slice(5);
     svg.append(text);
   });
+  window.ChartProbe?.attach(svg, {
+    plot: { left: padX, right: width - padX, top: 35, bottom: 240 },
+    points: points.map((point, index) => ({
+      x: point.x,
+      label: daily[index].date,
+      rows: messageProbeRows(daily[index].me, daily[index].them),
+      markers: [{ y: point.you, tone: 'me' }, { y: point.them, tone: 'other' }],
+    })),
+  });
 }
 
 function balanceRow(label, mine, theirs, mineLabel, theirsLabel) {
@@ -452,12 +470,23 @@ function renderBalance(stats = {}) {
   const initiative = stats.initiative || {};
   const length = stats.message_length || {};
   const goodnight = stats.goodnight || {};
-  $('#balance-list').replaceChildren(
-    balanceRow('消息', basic.my_messages, basic.their_messages, `${number(basic.my_messages)} 条`, `${number(basic.their_messages)} 条`),
-    balanceRow('发起', initiative.my_starts, initiative.their_starts, `${number(initiative.my_starts)} 次`, `${number(initiative.their_starts)} 次`),
-    balanceRow('平均字数', length.my_avg_chars, length.their_avg_chars, `${number(length.my_avg_chars, 1)} 字`, `${number(length.their_avg_chars, 1)} 字`),
-    balanceRow('先说晚安', goodnight.my_goodnight, goodnight.their_goodnight, `${number(goodnight.my_goodnight)} 次`, `${number(goodnight.their_goodnight)} 次`),
-  );
+  const list = $('#balance-list');
+  window.ChartProbe?.detach(list);
+  const items = [
+    ['消息', basic.my_messages, basic.their_messages, `${number(basic.my_messages)} 条`, `${number(basic.their_messages)} 条`],
+    ['发起', initiative.my_starts, initiative.their_starts, `${number(initiative.my_starts)} 次`, `${number(initiative.their_starts)} 次`],
+    ['平均字数', length.my_avg_chars, length.their_avg_chars, `${number(length.my_avg_chars, 1)} 字`, `${number(length.their_avg_chars, 1)} 字`],
+    ['先说晚安', goodnight.my_goodnight, goodnight.their_goodnight, `${number(goodnight.my_goodnight)} 次`, `${number(goodnight.their_goodnight)} 次`],
+  ].map(([label, mine, theirs, mineLabel, theirsLabel]) => ({
+    element: balanceRow(label, mine, theirs, mineLabel, theirsLabel),
+    label,
+    rows: [
+      { label: '你', value: mineLabel, tone: 'me' },
+      { label: '对方 / 其他成员', value: theirsLabel, tone: 'other' },
+    ],
+  }));
+  list.replaceChildren(...items.map((item) => item.element));
+  window.ChartProbe?.attachRows(list, items);
 }
 
 function renderHours(hourly = {}) {
@@ -467,6 +496,8 @@ function renderHours(hourly = {}) {
   });
   const max = Math.max(1, ...values.flatMap((entry) => [entry.me, entry.them]));
   const chart = $('#hour-chart');
+  const previousSvg = chart.querySelector('svg');
+  if (previousSvg) window.ChartProbe?.detach(previousSvg);
   chart.replaceChildren();
   const svg = svgNode('svg', { viewBox: '0 0 600 190', role: 'img' });
   const meTotal = values.reduce((sum, entry) => sum + entry.me, 0);
@@ -481,6 +512,7 @@ function renderHours(hourly = {}) {
   const themLabel = svgNode('text', { x: 4, y: 132, class: 'hour-side-label' });
   themLabel.textContent = 'TA';
   svg.append(meLabel, themLabel);
+  const probePoints = [];
   values.forEach((entry, hour) => {
     const x = 50 + hour * 22.3;
     const meHeight = entry.me / max * 58;
@@ -494,6 +526,15 @@ function renderHours(hourly = {}) {
     meBar.append(meTip);
     themBar.append(themTip);
     svg.append(meBar, themBar);
+    probePoints.push({
+      x: x + 7,
+      label: `${String(hour).padStart(2, '0')}:00`,
+      rows: messageProbeRows(entry.me, entry.them),
+      markers: [
+        { y: 78 - meHeight, tone: 'me' },
+        { y: 87 + Math.max(themHeight, entry.them ? 1 : 0), tone: 'other' },
+      ],
+    });
     if (hour % 3 === 0) {
       const label = svgNode('text', { x: x + 7, y: 178, 'text-anchor': 'middle', class: 'hour-label' });
       label.textContent = String(hour).padStart(2, '0');
@@ -502,6 +543,10 @@ function renderHours(hourly = {}) {
   });
   chart.setAttribute('aria-label', description.textContent);
   chart.append(svg);
+  window.ChartProbe?.attach(svg, {
+    plot: { left: 48, right: 590, top: 18, bottom: 148 },
+    points: probePoints,
+  });
 }
 
 function renderScopes(preview = {}) {
