@@ -10,7 +10,7 @@ elapsed days use epoch-second differences (complete 24-hour periods).
 from __future__ import annotations
 
 import math
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from statistics import median
 
 from dashboard.analysis_metrics import _date_bounds, _message_time
@@ -31,9 +31,10 @@ NOTICES = (
     "无效时间（含 2000—2100 年以外）、未来时间和系统消息不进入时间线；排除计数按此顺序互斥统计。",
     "频繁周为消息数达到 max(20, 活跃周消息数中位数 × 1.5 向上取整) 的周；相邻频繁周合并为阶段，不代表感情强弱。",
     "周从本机周一开始，只统计有消息的周；所选范围边界可能是不完整周，阶段日期是该阶段实际记录的首末日期。",
+    "每日频次完整覆盖标明的所选范围，按本机日期稀疏返回；范围内未列出的日期计数为 0，仅表示截至统计时点的本机有效归档消息数，不保证历史归档齐全。覆盖限于 2000—2100 年及统计时点所在日期，空区间不作零值推断。",
     "归档间隔仅指所选范围相邻有效消息相隔至少 7 个完整天；不含最后记录到现在的尾部间隔，不推断原因。",
     "对方发送时间包含其他参与者（群聊）及无法识别为我的发送方；它不是某个特定人的已读或回复证明。",
-    "列表仅保留最近的有限条目，节点另保留范围首末记录；截断标记和总数用于区分显示范围与统计范围。",
+    "周、阶段、间隔和节点列表仅保留最近的有限条目，节点另保留范围首末记录；截断标记和总数用于区分显示范围与统计范围。每日频次不截断。",
 )
 
 
@@ -99,7 +100,7 @@ def build_relationship_timeline(payload, scope, now=None):
     source_max_stamp = None
     last_by_sender = {"me": None, "other": None}
     last_record = None
-    scoped, weekly_counts = [], {}
+    scoped, weekly_counts, daily_counts = [], {}, {}
     for message in messages:
         parsed = _message_time(message.get("timestamp")) if isinstance(message, dict) else None
         if parsed is None:
@@ -123,6 +124,7 @@ def build_relationship_timeline(payload, scope, now=None):
         if (date_from and day < date_from) or (date_to and day > date_to):
             continue
         scoped.append(stamp)
+        daily_counts[day] = daily_counts.get(day, 0) + 1
         week = day - timedelta(days=day.weekday())
         counts = weekly_counts.setdefault(week, {"count": 0, "first": stamp, "last": stamp})
         counts["count"] += 1
@@ -130,6 +132,14 @@ def build_relationship_timeline(payload, scope, now=None):
         counts["last"] = max(counts["last"], stamp)
 
     scoped.sort()
+    # Completeness describes this selected local aggregate, not archive history.
+    # Intersect coverage with the parser's supported local calendar years. The
+    # sparse day list is therefore bounded without dropping any eligible days.
+    as_of_day = datetime.fromtimestamp(now_stamp).date()
+    coverage_to = min(date_to or as_of_day, as_of_day, date(2100, 12, 31))
+    coverage_from = max(date_from or min(daily_counts, default=coverage_to), date(2000, 1, 1))
+    if coverage_from > coverage_to:
+        coverage_from = coverage_to = None
     weeks = sorted(weekly_counts.items())
     baseline = median(value["count"] for _, value in weeks) if weeks else 0
     threshold = max(20, math.ceil(1.5 * baseline))
@@ -190,6 +200,14 @@ def build_relationship_timeline(payload, scope, now=None):
             "week_start": "monday", "threshold": threshold,
             "baseline_active_week_median": baseline, "active_weeks": len(weeks),
             "weekly": weekly, "phases": phases,
+            "daily": [{"date": day.isoformat(), "count": count}
+                      for day, count in sorted(daily_counts.items())],
+            "daily_coverage": {
+                "complete": True,
+                "date_from": coverage_from.isoformat() if coverage_from else None,
+                "date_to": coverage_to.isoformat() if coverage_to else None,
+                "timezone": "server_local", "basis": "selected_scope_non_system_non_future",
+            },
         },
         "gaps": gaps,
         "nodes": nodes,
