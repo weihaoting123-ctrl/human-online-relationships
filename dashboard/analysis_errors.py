@@ -32,7 +32,7 @@ RULES = {
 _FIELDS = re.compile(
     r'(?:response|report|summary|observations|actions|caveats|timeline'
     r'(?:\.(?:version|generated|coverage|events_total|events_truncated|events'
-    r'(?:\[\d{1,4}\](?:\.(?:id|date_from|date_to|kind|title|summary|status|evidence_level|related_event_id|evidence'
+    r'(?:\[\d{1,4}\](?:\.(?:id|date_from|date_to|kind|title|summary|status|evidence_level|event_state|related_event_id|evidence'
     r'(?:\[\d\](?:\.(?:date|sample_index))?)?))?)?'
     r'|no_contact_reason(?:\.(?:kind|summary|evidence(?:\[\d\](?:\.(?:date|sample_index))?)?|limitations(?:\[\d\])?))?))?)'
 )
