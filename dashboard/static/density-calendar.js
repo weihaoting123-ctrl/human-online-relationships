@@ -70,11 +70,11 @@
       const first = prefix.length === 5 ? `${prefix}01-01` : `${prefix}-01`;
       const last = prefix.length === 5 ? `${prefix}12-31`
         : `${prefix}-${daysIn(Number(prefix.slice(0, 4)), Number(prefix.slice(5, 7)))}`;
-      if (first > data.asOf) return '未来日期';
-      if (!data.from || first > data.to || last < data.from) return '统计范围外';
+      if (first > data.asOf) return {state: 'future', label: '未来日期'};
+      if (!data.from || first > data.to || last < data.from) return {state: 'outside', label: '统计范围外'};
       let total = 0, active = 0;
       for (const [date, count] of data.counts) if (date.startsWith(prefix)) { total += count; active++; }
-      return `${number(total)} 条 · ${number(active)} 个活跃日`;
+      return {state: 'available', total, active, label: `${number(total)} 条 · ${number(active)} 个活跃日`};
     };
     const segments = make('div', 'dc-segments'); segments.setAttribute('role', 'group');
     segments.setAttribute('aria-label', '联系密度显示方式');
@@ -88,6 +88,7 @@
     const previous = button('‹', 'dc-step'), next = button('›', 'dc-step');
     navigation.append(yearSelect, previous, next); toolbar.append(title, navigation);
     const summary = make('p', 'dc-summary'); summary.setAttribute('role', 'status');
+    const gridCaption = make('p', 'dc-grid-caption');
     const content = make('div', 'dc-content');
     const readout = make('p', 'dc-readout', '指向日期查看条数，也可用键盘或点按。');
     readout.setAttribute('role', 'status'); readout.setAttribute('aria-live', 'polite'); readout.setAttribute('aria-atomic', 'true');
@@ -99,29 +100,40 @@
       swatch.setAttribute('aria-hidden', 'true'); legend.append(swatch);
     }
     legend.append(make('span', '', '多'), make('span', 'dc-scale', `按所选范围日峰值 ${number(data.max)} 条分档`));
+    const stateKey = make('div', 'dc-state-key'); stateKey.setAttribute('aria-label', '日期状态说明');
+    for (const [state, label] of [['zero', '0 条（范围内）'], ['outside', '统计范围外'], ['future', '未来日期']]) {
+      const item = make('span', 'dc-state-item'), sample = make('span', 'dc-state-sample', '15');
+      sample.dataset.state = state; sample.setAttribute('aria-hidden', 'true');
+      item.append(sample, make('span', '', label)); stateKey.append(item);
+    }
     const note = make('p', 'rt-note dc-note', `颜色只表示消息数量，不等于感情强度。0 条仅表示本机归档中无有效消息，归档可能缺漏。统计截至 ${data.asOf}。`);
-    target.append(toolbar, summary, content, readout, legend, note);
+    target.append(toolbar, summary, gridCaption, content, readout, legend, stateKey, note);
 
     function showDay(date) {
       readout.textContent = dayLabel(date);
       content.querySelectorAll('.dc-pointed').forEach((node) => node.classList.remove('dc-pointed'));
-      content.querySelector(`[data-date="${date}"]`)?.classList.add('dc-pointed');
+      const pointed = content.querySelector(`[data-date="${date}"]`);
+      pointed?.classList.add('dc-pointed');
+      content.querySelectorAll('.dc-month-detail').forEach((node) => { node.textContent = '指向日期查看条数'; });
+      const detail = pointed?.closest('.dc-month')?.querySelector('.dc-month-detail');
+      if (detail) detail.textContent = dayLabel(date);
     }
     function monthGrid(y, m, mini = false) {
       const grid = make(mini ? 'span' : 'div', mini ? 'dc-mini-grid' : 'dc-grid');
       grid.setAttribute('aria-label', `${y} 年 ${m} 月每日消息`);
       if (mini) grid.setAttribute('aria-hidden', 'true');
-      else weekdays.forEach((name) => grid.append(make('span', 'dc-weekday', name)));
+      weekdays.forEach((name) => grid.append(make('span', 'dc-weekday', name)));
       for (let i = 0; i < pad(y, m); i++) { const gap = make('span', 'dc-padding'); gap.setAttribute('aria-hidden', 'true'); grid.append(gap); }
       for (let d = 1; d <= daysIn(y, m); d++) {
         const date = iso(y, m, d), status = dayState(date), n = countFor(date);
-        const cell = mini ? make('span', 'dc-mini-day') : button('', 'dc-day', dayLabel(date));
+        const cell = mini ? make('span', 'dc-mini-day', String(d)) : button('', 'dc-day', dayLabel(date));
         cell.dataset.state = status; cell.dataset.level = String(level(n));
+        cell.dataset.date = date;
+        cell.title = dayLabel(date);
+        cell.addEventListener('pointerenter', () => showDay(date));
         if (!mini) {
-          cell.dataset.date = date;
           cell.append(make('span', 'dc-day-number', String(d)), make('span', 'dc-day-count',
             status === 'future' || status === 'outside' ? '—' : number(n)));
-          cell.addEventListener('pointerenter', () => showDay(date));
           cell.addEventListener('focus', () => showDay(date));
           cell.addEventListener('click', () => showDay(date));
           cell.addEventListener('keydown', (event) => {
@@ -134,6 +146,9 @@
         }
         grid.append(cell);
       }
+      if (mini) for (let i = pad(y, m) + daysIn(y, m); i < 42; i++) {
+        const gap = make('span', 'dc-padding'); gap.setAttribute('aria-hidden', 'true'); grid.append(gap);
+      }
       return grid;
     }
     function draw(focusFirst = false) {
@@ -145,17 +160,30 @@
       next.setAttribute('aria-label', mode === 'month' ? '下一月' : '下一年');
       previous.disabled = year === minYear && (mode === 'year' || month === 1);
       next.disabled = year === maxYear && (mode === 'year' || month === 12);
-      summary.textContent = `${totals(mode === 'year' ? `${year}-` : iso(year, month, 1).slice(0, 7))} · 所选范围内`;
+      summary.textContent = `${totals(mode === 'year' ? `${year}-` : iso(year, month, 1).slice(0, 7)).label} · 所选范围内`;
+      gridCaption.textContent = mode === 'month' ? '上方为日期 · 下方为消息数量（条）' : '格内为日期 · 指向日期查看消息条数，选择月份展开';
       readout.textContent = mode === 'month' ? '指向日期查看条数，也可用方向键或点按。' : '选择月份，查看逐日联系密度。';
       content.replaceChildren();
       if (mode === 'month') content.append(monthGrid(year, month));
       else {
         const months = make('div', 'dc-year-grid');
         for (let m = 1; m <= 12; m++) {
-          const prefix = iso(year, m, 1).slice(0, 7), total = totals(prefix);
-          const tile = button('', 'dc-month', `${year} 年 ${m} 月 · ${total}，查看每日`);
-          tile.dataset.month = String(m);
-          tile.append(make('strong', '', `${m} 月`), monthGrid(year, m, true), make('span', 'dc-month-total', total));
+          const prefix = iso(year, m, 1).slice(0, 7), stats = totals(prefix);
+          const tile = button('', 'dc-month', `${year} 年 ${m} 月 · ${stats.label}，查看每日`);
+          tile.dataset.month = String(m); tile.dataset.coverage = stats.state;
+          const heading = make('span', 'dc-month-heading'), chevron = make('span', 'dc-month-open', '›');
+          chevron.setAttribute('aria-hidden', 'true'); heading.append(make('strong', '', `${m} 月`), chevron);
+          const total = make('span', 'dc-month-total');
+          if (stats.state === 'available') total.append(make('strong', '', `${number(stats.total)} 条`),
+            make('span', '', ` · ${number(stats.active)} 个活跃日`));
+          else total.textContent = stats.label;
+          const detail = make('span', 'dc-month-detail', '指向日期查看条数'); detail.setAttribute('aria-hidden', 'true');
+          tile.append(heading, total, monthGrid(year, m, true), detail);
+          tile.addEventListener('focus', () => {
+            readout.textContent = `${year} 年 ${m} 月 · ${stats.label}，按回车展开每日`;
+            content.querySelectorAll('.dc-pointed').forEach((node) => node.classList.remove('dc-pointed'));
+            content.querySelectorAll('.dc-month-detail').forEach((node) => { node.textContent = '指向日期查看条数'; });
+          });
           tile.addEventListener('click', () => { month = m; mode = 'month'; draw(true); }); months.append(tile);
         }
         content.append(months);
