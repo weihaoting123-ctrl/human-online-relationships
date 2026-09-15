@@ -5,7 +5,8 @@ import re
 from datetime import date
 
 from dashboard.analysis_contract import (EVENT_KEYS, EVENT_KINDS, EVENT_STATUSES,
-                                         EVIDENCE_LEVELS, MAX_EVENTS, REASON_KINDS)
+                                         EVIDENCE_LEVELS, MAX_EVENTS, REASON_KINDS,
+                                         STATE_FIELDS, WIRE_EVENT_KEYS, EVENT_STATES, valid_event_state)
 from dashboard.analysis_errors import OutputValidationError
 
 MAX_REPORT_EVENTS = 1200  # 200 existing leaf segments, six events each.
@@ -173,7 +174,15 @@ def validate(value, context, clean):
     prefix = f"s{context.get('segment', {}).get('index', 1)}-"
     for index, item in enumerate(raw_events):
         field = _event_field(index)
-        _object(item, EVENT_KEYS, field)
+        if isinstance(item, dict) and "event_state" in item:
+            # Validate the complete wire shape first. Mixed legacy/wire fields
+            # must not be discarded or overwritten during canonical decoding.
+            _object(item, WIRE_EVENT_KEYS, field)
+            state = _enum(item["event_state"], EVENT_STATES, field + ".event_state")
+            item = {**{key: val for key, val in item.items() if key != "event_state"},
+                    **dict(zip(STATE_FIELDS, EVENT_STATES[state]))}
+        else:
+            _object(item, EVENT_KEYS, field)
         identity, related = item["id"], item["related_event_id"]
         pattern = r"s[1-9]\d{0,2}-e[1-6]" if packets else r"e[1-6]"
         if not isinstance(identity, str) or not re.fullmatch(pattern, identity):
@@ -196,11 +205,7 @@ def validate(value, context, clean):
                 _fail("OUTPUT_EVIDENCE_RANGE", f"{field}.evidence[{position}].date")
         if level != "insufficient" and not refs:
             _fail("OUTPUT_EVIDENCE_REQUIRED", field + ".evidence")
-        if level == "insufficient" and status != "unknown":
-            _fail("OUTPUT_STATE", field + ".status")
-        if kind == "plan" and status not in {"planned", "unknown"}:
-            _fail("OUTPUT_STATE", field + ".status")
-        if status in {"realized", "cancelled"} and (kind != "outcome" or level != "reported" or not refs):
+        if not valid_event_state(kind, status, level):
             _fail("OUTPUT_STATE", field + ".status")
         event = {"id": identity if packets else prefix + identity, "date_from": start, "date_to": end,
                  "kind": kind, "title": _text(item["title"], 40, clean, field + ".title"),
