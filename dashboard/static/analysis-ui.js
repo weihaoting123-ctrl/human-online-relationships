@@ -81,7 +81,7 @@
     'OUTPUT_MERGE_CHANGED', 'OUTPUT_REASON_CHANGED', 'OUTPUT_JSON', 'OUTPUT_INCOMPLETE', 'OUTPUT_RESPONSE',
   ]);
   // Mirror the public schema paths; never render arbitrary detail keys or prose.
-  const outputErrorField = /^(?:response|report|summary|observations|actions|caveats|timeline(?:\.(?:version|generated|coverage|events_total|events_truncated|events(?:\[\d{1,4}\](?:\.(?:id|date_from|date_to|kind|title|summary|status|evidence_level|related_event_id|evidence(?:\[\d\](?:\.(?:date|sample_index))?)?))?)?|no_contact_reason(?:\.(?:kind|summary|evidence(?:\[\d\](?:\.(?:date|sample_index))?)?|limitations(?:\[\d\])?))?))?)$/;
+  const outputErrorField = /^(?:response|report|summary|observations|actions|caveats|timeline(?:\.(?:version|generated|coverage|events_total|events_truncated|events(?:\[\d{1,4}\](?:\.(?:id|date_from|date_to|kind|title|summary|status|evidence_level|event_state|related_event_id|evidence(?:\[\d\](?:\.(?:date|sample_index))?)?))?)?|no_contact_reason(?:\.(?:kind|summary|evidence(?:\[\d\](?:\.(?:date|sample_index))?)?|limitations(?:\[\d\])?))?))?)$/;
   const validIndex = (value, maximum) => Number.isInteger(value) && value >= 1 && value <= maximum;
   function diagnosticContext(detail, legacySegment) {
     const field = detail?.field;
