@@ -83,6 +83,12 @@
 
 本阶段不接管旧微信/QQ 在线提取器、显式文件输出、原生同步检查点，也不实现预检向导。主需求 [#15](https://github.com/weihaoting123-ctrl/human-online-relationships/issues/15) 保持开放；DATA-01 与 IMP-01 不因这个补丁全部关闭。UI 工作区重组仍按依赖后续独立迭代。
 
+## 用户指定独立迭代：AI-06 / v0.1.10 候选
+
+时间线事件固定组合，P1，待远端验收。[主 Issue #40](https://github.com/weihaoting123-ctrl/human-online-relationships/issues/40) · [诊断与计划](docs/plans/2026-09-15-atomic-event-state.md) · [审查记录](docs/reviews/v0.1.10-review.md)。
+
+限定模型输出三元状态组合及安全诊断路径，使用固定合法选项并解码回原报告结构；不放宽证据或自动修正冲突。旧错误没有失败正文，无法追溯具体组合或离线恢复该次结果。旧报告/缓存保留，新预览按实际提示版本确认；不自动发起真实模型调用。基于 v0.1.9 候选，正式发布另核验当前 CI 和依赖基线。
+
 ## 用户指定独立迭代：AI-05 / v0.1.8 候选
 
 关系分析视角，P2，待验收。[主 Issue #36](https://github.com/weihaoting123-ctrl/human-online-relationships/issues/36) · [设计](docs/superpowers/specs/2026-09-15-relationship-analysis-views.md) · [计划](docs/superpowers/plans/2026-09-15-relationship-analysis-views.md) · [审查记录](docs/reviews/v0.1.8-review.md)。
