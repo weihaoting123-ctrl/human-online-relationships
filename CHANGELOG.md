@@ -6,6 +6,17 @@
 
 下一版本候选见 [ROADMAP](ROADMAP.md)。候选不代表已经实现，也不是发布日期承诺。
 
+## 0.1.9 — 待发布 · 更易读的联系密度日历
+
+追踪 [UI-05 / #38](https://github.com/weihaoting123-ctrl/human-online-relationships/issues/38)，基于 v0.1.8 候选；不代表已合并或正式 Release。
+
+- 年视图每个月补齐星期和日期数字，突出月消息总量；指向日期显示当天精确条数，点击月份仍可进入月历。
+- 月视图保留日期与消息数量，增加读数说明；年历根据实际容器宽度排布，避免小卡片数字挤压。
+- 使用柔和圆角、留白与红色层级，减少空白日期的虚线和斜纹；保留范围外、未来与真实零值的明确区分。
+- 保持键盘、触摸、浅深主题及减少动态效果；不改变统计、数据、报告、模型或授权流程。
+
+仅使用合成统计开发与验证。见 [计划](docs/plans/2026-09-15-readable-density-calendar.md) 与 [审查记录](docs/reviews/v0.1.9-review.md)；正式发布需当前 CI 和依赖基线验收。
+
 ## 0.1.8 — 待发布 · 关系分析视角
 
 追踪 [AI-05 / #36](https://github.com/weihaoting123-ctrl/human-online-relationships/issues/36)，基于 v0.1.7 候选；不代表已合并或正式 Release。
