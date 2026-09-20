@@ -2,5 +2,5 @@
 -r requirements.txt
 
 # Verified against the official PyPI releases; keep browser and client in sync.
-playwright==1.62.0
+playwright==1.63.0
 pip-audit==2.10.1
