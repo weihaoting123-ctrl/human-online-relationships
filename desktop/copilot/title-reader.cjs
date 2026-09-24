@@ -4,11 +4,12 @@ const {spawn:systemSpawn}=require('node:child_process');
 const {validCalibration}=require('./title-observer.cjs');
 class TitleReader {
   constructor({root,parentPid,observer,spawn=systemSpawn,timeout=5000}){
-    Object.assign(this,{root,parentPid,observer,spawn,timeout});this.region=null;this.child=null;this.pending=null;this.retryAfter=0;
+    Object.assign(this,{root,parentPid,observer,spawn,timeout});this.region=null;this.child=null;this.pending=null;this.retryAfter=0;this.generation=0;
   }
   setRegion(region){if(!validCalibration(region))throw new TypeError('TITLE_ROI_INVALID');this.stop();this.region={...region}}
   finish(frame){const pending=this.pending;this.pending=null;if(pending){clearTimeout(pending.timer);pending.resolve(frame)}}
   stop(reason='TITLE_UNAVAILABLE'){
+    this.generation++;
     const child=this.child;this.child=null;
     if(child){child.stdin.end();if(child.exitCode===null)child.kill()}
     this.finish(this.observer.clear(reason));
@@ -63,7 +64,11 @@ class TitleReader {
     try{this.child.stdin.write(JSON.stringify(this.region)+'\n')}catch{this.stop('TITLE_READER_UNAVAILABLE')}
     return promise;
   }
-  async refresh(){if(this.pending)await this.pending.promise;return this.sample()}
+  async refresh(){
+    const generation=this.generation;
+    if(this.pending)await this.pending.promise;
+    return generation===this.generation?this.sample():this.observer.snapshot();
+  }
   calibrate(){
     if(this.pending?.kind==='calibrate')return this.pending.promise;
     this.stop('TITLE_AUTO_CALIBRATING');

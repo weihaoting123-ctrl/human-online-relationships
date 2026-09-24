@@ -4,7 +4,7 @@ const {app,BrowserWindow,Menu,Tray,nativeImage,ipcMain,screen,shell,session,clip
 const {spawn}=require('node:child_process');
 const fs=require('node:fs');
 const path=require('node:path');
-const {launchOptions,trustedSender,windowCommand,allowedResource}=require('./security.cjs');
+const {launchOptions,presentationRequest,trustedSender,windowCommand,allowedResource}=require('./security.cjs');
 const {trayBitmap}=require('./icon.cjs');
 const {WindowController}=require('./window-controller.cjs');
 const {TitleObserver,validCalibration}=require('./title-observer.cjs');
@@ -22,7 +22,9 @@ app.commandLine.appendSwitch('disable-http-cache');
 const lock=app.requestSingleInstanceLock();
 if(!lock)app.quit();
 
-let win,tray,controller,watcher,tickTimer,pageReady=false,quitting=false,editMode=false;
+let win,tray,controller,watcher,tickTimer,pageReady=false,pageLoading=false,quitting=false,editMode=false;
+let pendingPresentation=options?.show===true;
+const appPath=path.resolve(process.argv[1]);
 let dragTimer;
 let titleObserver,titleReader,titleCalibration,titleAuto,titleTimer,recognitionEnabled=true;
 const safeSend=state=>{if(win&&!win.isDestroyed()&&pageReady)win.webContents.send('copilot:state',state)};
@@ -71,7 +73,7 @@ function stopWatcher(){
   if(child){child.stdin.end();setTimeout(()=>{if(child.exitCode===null)child.kill()},1000).unref()}
 }
 function startWatcher(){
-  if(watcher||quitting)return;
+  if(watcher||quitting||controller?.paused)return;
   const python=path.join(root,'.venv','Scripts','python.exe');
   const script=path.join(root,'scripts','copilot_window_watch.py');
   if(!fs.existsSync(python)||!fs.existsSync(script)){controller.fail('WINDOW_WATCH_NOT_INSTALLED');return}
@@ -100,6 +102,15 @@ function pause(value){
   if(value)stopWatcher();else startWatcher();
   buildMenu();
 }
+function present(){
+  pendingPresentation=true;
+  if(!controller||quitting)return;
+  pendingPresentation=false;
+  pause(true);
+  editMode=false;win.setFocusable(false);
+  controller.present(screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea);
+  if(!pageReady&&!pageLoading)loadPage();
+}
 function buildMenu(){
   if(!tray)return;
   tray.setContextMenu(Menu.buildFromTemplate([
@@ -114,14 +125,15 @@ function buildMenu(){
   ]));
 }
 async function loadPage(){
-  if(!win||win.isDestroyed())return;
-  pageReady=false;win.hide();controller.visible=false;
+  if(!win||win.isDestroyed()||pageLoading)return;
+  pageLoading=true;pageReady=false;win.hide();controller.visible=false;
   try{
     await win.loadURL(options.url);
     if(win.webContents.getURL()!==options.url)throw new Error('UNTRUSTED_PAGE');
     pageReady=true;safeSend(controller.snapshot());if(titleObserver)sendConversation(titleObserver.snapshot());controller.render();
   }
   catch{pageReady=false;win.hide();tray?.setToolTip('对话副驾：本机控制台未就绪，可从菜单重新连接')}
+  finally{pageLoading=false}
 }
 function create(){
   session.defaultSession.setPermissionRequestHandler((_contents,_permission,callback)=>callback(false));
@@ -189,8 +201,11 @@ function create(){
   screen.on('display-removed',()=>controller.render());
   tickTimer=setInterval(()=>controller.tick(),500);
   loadPage().then(startWatcher);
+  if(pendingPresentation)present();
 }
-app.on('second-instance',()=>{}); // An accidental second launch must not steal focus.
+app.on('second-instance',(_event,args,cwd)=>{
+  if(presentationRequest(args,{executable:process.execPath,appPath,cwd,port:options.port}))present();
+});
 app.on('before-quit',()=>{quitting=true;clearInterval(tickTimer);clearInterval(titleTimer);clearTimeout(dragTimer);if(titleAuto?.active)titleAuto.cancel();if(titleCalibration?.active)titleCalibration.cancel();titleReader?.stop();stopWatcher();tray?.destroy()});
 app.on('window-all-closed',()=>app.quit());
 if(lock)app.whenReady().then(create).catch(()=>{console.error('COPILOT_START_FAILED');app.exit(1)});

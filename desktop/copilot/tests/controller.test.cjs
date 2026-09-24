@@ -91,3 +91,29 @@ test('floating panel stays on its own monitor when target changes monitors',()=>
  controller.update({...frame,rect:{...frame.rect,x:1800}});
  assert.equal(controller.lastBounds.x,1000);
 });
+test('explicit presentation clears an old target and error and shows expanded without a foreground target',()=>{
+ const {controller,calls,frame}=setup();controller.update(frame);controller.fail('WINDOW_WATCH_STOPPED');calls.length=0;
+ controller.present({x:1600,y:0,width:1280,height:800});
+ assert.equal(controller.snapshot().presentation,true);assert.equal(controller.snapshot().paused,true);
+ assert.equal(controller.snapshot().target,null);assert.equal(controller.snapshot().error_code,null);
+ assert.equal(controller.snapshot().size,'expanded');assert.equal(controller.snapshot().effectiveSize,'expanded');
+ assert.equal(controller.frame,null);assert.equal(controller.visible,true);assert.equal(calls.includes('showInactive'),true);
+ assert.deepEqual(controller.lastBounds,{x:2030,y:40,width:420,height:720});
+ controller.update({...frame,target:'ignored-while-presented'});
+ assert.equal(controller.snapshot().target,null);assert.equal(controller.visible,true);
+});
+test('presentation clamps expanded bounds to a small display and waits for page readiness',()=>{
+ const {controller,calls}=setup();let ready=false;controller.ready=()=>ready;
+ controller.present({x:-320,y:20,width:320,height:600});
+ assert.equal(controller.visible,false);assert.equal(calls.includes('showInactive'),false);
+ ready=true;controller.render();
+ assert.deepEqual(controller.lastBounds,{x:-320,y:20,width:320,height:600});assert.equal(controller.visible,true);
+});
+test('resume exits presentation and stays hidden until a fresh eligible target arrives',()=>{
+ const {controller,calls,frame}=setup();controller.present({x:0,y:0,width:1600,height:900});
+ controller.pause(false);calls.length=0;
+ assert.equal(controller.snapshot().presentation,false);assert.equal(controller.snapshot().paused,false);
+ assert.equal(controller.snapshot().target,null);assert.equal(controller.visible,false);
+ controller.update({...frame,foreground:false,foreground_pid:20});assert.equal(controller.visible,false);
+ controller.update(frame);assert.equal(controller.visible,true);assert.equal(calls.includes('showInactive'),true);
+});

@@ -24,6 +24,12 @@
 
 实时消息捕获、最新同城活动来源、macOS/Linux 原生伴随和开机自启保留为后续候选，不用历史归档或模拟活动冒充已实现。
 
+## 用户指定独立迭代：COPILOT-04 / 1.0.0-rc.5
+
+P2，候选待验收。[主 Issue #49](https://github.com/weihaoting123-ctrl/human-online-relationships/issues/49) · [PR #47](https://github.com/weihaoting123-ctrl/human-online-relationships/pull/47) · [设计](docs/superpowers/specs/2026-09-24-copilot-launch-button.md)。
+
+浏览器顶部一键启动或打开现有桌面助手；固定本机目标、同源校验和重复点击保护；明确暂停的设置窗口与“跟随微信”入口。按钮不授权聊天读取、不调用模型、不改变同步任务。独立合成回归、review 与部署验证见同版审查记录；正式 1.0 的实机兼容性门槛仍保留。
+
 ## 用户指定独立迭代：COPILOT-03 / 1.0.0-rc.4
 
 P2，待实机验收。[主 Issue #48](https://github.com/weihaoting123-ctrl/human-online-relationships/issues/48) · [PR #47](https://github.com/weihaoting123-ctrl/human-online-relationships/pull/47) · [候选审查记录](docs/reviews/v1.0.0-rc.4-review.md)。

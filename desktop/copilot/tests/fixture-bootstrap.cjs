@@ -1,10 +1,16 @@
 'use strict';
 // Test-only entrypoint copied into a synthetic root; never used by the launcher.
 // Playwright's debugger switches are not accepted by the production CLI.
-process.argv=[process.argv[0],__filename,...process.argv.filter(value=>/^--port=\d+$/.test(value))];
+process.argv=[process.argv[0],__filename,...process.argv.filter(value=>/^--port=\d+$/.test(value)||value==='--show')];
 const fs=require('node:fs');const {PassThrough}=require('node:stream');const {EventEmitter}=require('node:events');
 const childProcess=require('node:child_process');const exists=fs.existsSync;
-const {app,globalShortcut,screen}=require('electron');
+const {app,BrowserWindow,globalShortcut,screen}=require('electron');
+globalThis.__fixtureWatchStarts=0;
+globalThis.__fixtureWatchActive=0;
+globalThis.__fixtureSecondArgs=[];app.on('second-instance',(_event,args)=>{globalThis.__fixtureSecondArgs=args});
+globalThis.__fixtureFocusCalls=0;
+const focus=BrowserWindow.prototype.focus;
+BrowserWindow.prototype.focus=function(...args){globalThis.__fixtureFocusCalls++;return focus.apply(this,args)};
 let mark;let cursor={x:0,y:0};
 globalShortcut.register=(_key,callback)=>{mark=callback;return true};
 globalShortcut.unregister=()=>{mark=null};
@@ -31,8 +37,10 @@ childProcess.spawn=(_exe,args)=>{
   child.stdin.on('finish',()=>child.kill());return child;
  }
  const frame={version:1,state:'bound',target:'synthetic-window',rect:{x:80,y:80,width:500,height:500},visible:true,minimized:false,foreground:true,foreground_pid:process.pid,candidate_count:1};
+ globalThis.__fixtureWatchStarts++;globalThis.__fixtureWatchActive++;
  const timer=setInterval(()=>child.stdout.write(JSON.stringify(frame)+'\n'),100);
- child.kill=()=>{clearInterval(timer);child.exitCode=0;child.emit('exit',0)};
+ child.kill=()=>{if(child.exitCode!==null)return;clearInterval(timer);globalThis.__fixtureWatchActive--;child.exitCode=0;child.emit('exit',0)};
  child.stdin.on('finish',()=>child.kill());return child;
 };
 require('./main.cjs');
+if(process.env.COPILOT_FIXTURE_QUEUED_SHOW==='1')app.emit('second-instance',{},[...process.argv,'--show'],process.cwd());

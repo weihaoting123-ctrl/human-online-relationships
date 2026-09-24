@@ -83,6 +83,7 @@ SYNTHETIC_ALLOWLIST = {
     ("tests/test_analysis_segment_safety.py", "CREDENTIAL_LITERAL"): frozenset({"synthetic-safety-key-never-real"}),
     ("tests/test_analysis_ui.py", "CREDENTIAL_LITERAL"): frozenset({"synthetic-analysis-test-token"}),
     ("tests/test_copilot_api.py", "CREDENTIAL_LITERAL"): frozenset({"synthetic-copilot-token"}),
+    ("tests/test_copilot_desktop.py", "CREDENTIAL_LITERAL"): frozenset({"synthetic-desktop-token"}),
     ("tests/test_copilot_service.py", "CREDENTIAL_LITERAL"): frozenset({"synthetic-test-key"}),
     ("tests/test_copilot_service.py", "EMAIL_ADDRESS"): frozenset({"test" + "@" + "example.com"}),
     ("tests/test_copilot_live.py", "CREDENTIAL_LITERAL"): frozenset({"synthetic-test-key", "synthetic-copilot-token"}),

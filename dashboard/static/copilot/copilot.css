@@ -41,6 +41,13 @@ body[data-native="true"] button, body[data-native="true"] input, body[data-nativ
 .icon-button { padding: 0; width: 32px; min-width: 32px; height: 32px; min-height: 32px; font-size: 22px; line-height: 1; color: var(--muted); }
 .window-actions { gap: 2px; }
 .native-status { color: var(--muted); font-size: 11px; margin: 9px 0; }
+.desktop-launch-card { margin: 12px 0 22px; padding: 18px; border: 1px solid #d4e3d9; border-radius: 20px; background: linear-gradient(145deg, #edf4ef, #fff); box-shadow: 0 5px 18px #243c3b06; }
+.desktop-launch-heading { display: flex; align-items: center; gap: 12px; margin-bottom: 17px; }
+.desktop-launch-heading h2 { font-size: 16px; letter-spacing: -.25px; }
+.desktop-launch-mark { display: grid; place-items: center; flex: 0 0 39px; height: 39px; border-radius: 13px; color: var(--green); background: #fff; font-size: 27px; }
+.desktop-launch-card .primary-button { width: 100%; min-height: 44px; }
+.desktop-launch-card #desktop-launch-status { margin-top: 11px; }
+.desktop-launch-privacy { margin-top: 8px; font-size: 11px; color: var(--muted); }
 .native-controls { margin: 12px 0; }
 .native-controls select { width: auto; flex: 1; font-size: 12px; }
 .capability-note { font-size: 11px; color: var(--muted); margin: 0 0 14px; }

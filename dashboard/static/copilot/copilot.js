@@ -545,8 +545,9 @@
     state.nativeSeen = true;
     state.nativeTarget = target;
     const labels = { waiting: '等待窗口', bound: '已绑定窗口', ambiguous: '检测到多个窗口，暂未绑定', error: '窗口跟随暂不可用' };
-    $('#native-status').textContent = `仅窗口跟随 · ${state.paused ? '已暂停' : labels[snapshot.state]}`;
-    $('#pause-follow').textContent = state.paused ? '恢复跟随' : '暂停跟随';
+    const presentation = state.paused && snapshot.presentation === true;
+    $('#native-status').textContent = presentation ? '设置窗口 · 跟随已暂停' : `仅窗口跟随 · ${state.paused ? '已暂停' : labels[snapshot.state]}`;
+    $('#pause-follow').textContent = presentation ? '跟随微信' : state.paused ? '恢复跟随' : '暂停跟随';
     $('#pause-follow').setAttribute('aria-pressed', String(state.paused));
     $('#window-mode').value = snapshot.mode === 'float' ? 'float' : 'dock';
     const size = snapshot.effectiveSize || snapshot.size;

@@ -19,4 +19,12 @@ if(fs.existsSync(filename)){
   test('timeout kills only owned worker and resolves unavailable',async()=>{const f=fixture(15);f.reader.setRegion({x:300,y:25,width:200,height:35});assert.equal((await f.reader.sample()).state,'unavailable');assert.equal(f.counts().kills,1);});
   test('stopping rejects late private frames',async()=>{const f=fixture();f.reader.setRegion({x:300,y:25,width:200,height:35});const p=f.reader.sample();f.reader.stop('TITLE_PAUSED');await p;
     f.child.stdout.write(JSON.stringify({state:'observed',source:'local_ocr',target:'test-window',title:'LATE'})+'\n');assert.equal(f.observer.snapshot().title,'');});
+  test('stop cancels a refresh waiting for a pending sample without restarting capture',async()=>{
+    const f=fixture();f.reader.setRegion({x:300,y:25,width:200,height:35});
+    const sample=f.reader.sample();const refresh=f.reader.refresh();
+    f.reader.stop('TITLE_PAUSED');await sample;
+    await new Promise(resolve=>setImmediate(resolve));
+    assert.equal(f.counts().spawns,1);assert.equal(f.reader.child,null);assert.equal(f.reader.pending,null);
+    assert.equal((await refresh).reason,'TITLE_PAUSED');
+  });
 }

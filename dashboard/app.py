@@ -155,6 +155,7 @@ from dashboard.search import search_messages  # noqa: E402
 from dashboard import analysis as scoped_ai  # noqa: E402
 from dashboard.copilot import service as copilot  # noqa: E402
 from dashboard.copilot import live as copilot_live  # noqa: E402
+from dashboard.copilot import desktop as copilot_desktop  # noqa: E402
 from dashboard.chat_heatmap import build_chat_heatmap  # noqa: E402
 from dashboard.library import (LibraryConflictError, LibraryNotFoundError,
                                LibraryValidationError)  # noqa: E402
@@ -1120,6 +1121,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     return self._json(library_service().snapshot())
                 if path == "/api/modules":
                     return self._json(module_registry().snapshot())
+                if path == "/api/copilot/desktop":
+                    if self.path != path:
+                        raise ValueError("桌面状态请求路径无效")
+                    return self._json(copilot_desktop.status(REPO_ROOT, self.server.server_port))
                 if path == "/api/copilot/status":
                     enabled = next(item['enabled'] for item in module_registry().snapshot()['modules'] if item['id'] == 'copilot')
                     return self._json(copilot.status(DATA_DIR, enabled=enabled, conversations=list_bundles()))
@@ -1184,6 +1189,22 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if not self._authorized():
             return self._error(HTTPStatus.FORBIDDEN, "本地会话令牌无效")
         try:
+            if path == "/api/copilot/desktop/launch":
+                if self.headers.get('Origin') != 'http://' + self.headers.get('Host', ''):
+                    return self._error(HTTPStatus.FORBIDDEN, "请求来源不是当前本机页面")
+                lengths = self.headers.get_all('Content-Length', [])
+                if (self.path != path or len(lengths) != 1 or self.headers.get('Transfer-Encoding') is not None
+                        or not re.fullmatch(r'[0-9]{1,4}', lengths[0]) or not 0 < int(lengths[0]) <= 1024):
+                    raise ValueError("桌面启动请求路径或大小无效")
+                raw = self.rfile.read(int(lengths[0]))
+                if len(raw) != int(lengths[0]):
+                    raise ValueError("桌面启动请求不完整")
+                request = json.loads(raw.decode('utf-8'))
+                if not isinstance(request, dict) or request:
+                    raise ValueError("桌面启动不接受自定义参数")
+                result = copilot_desktop.launch(REPO_ROOT, self.server.server_port)
+                code = HTTPStatus.ACCEPTED if result['desktop']['state'] == 'launch_requested' else HTTPStatus.OK
+                return self._json(result, code)
             if path in {"/api/copilot/live/preview", "/api/copilot/live/start", "/api/copilot/live/tick", "/api/copilot/live/stop"}:
                 if self.path != path or not 0 < int(self.headers.get("Content-Length", "0")) <= 8192:
                     raise ValueError("限时建议请求路径或大小无效")

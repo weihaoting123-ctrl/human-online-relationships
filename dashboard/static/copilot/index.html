@@ -8,6 +8,7 @@
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/copilot/copilot.css">
   <script src="/copilot/live.js" defer></script>
+  <script src="/copilot/desktop.js" defer></script>
   <script src="/copilot/copilot.js" defer></script>
 </head>
 <body data-size="expanded">
@@ -22,6 +23,12 @@
       </div>
     </header>
     <p id="native-status" class="native-status" role="status">浏览器模式 · 不跟随窗口</p>
+    <section id="desktop-launch-card" class="desktop-launch-card" aria-labelledby="desktop-launch-heading" hidden>
+      <div class="desktop-launch-heading"><span class="desktop-launch-mark" aria-hidden="true">↗</span><div><h2 id="desktop-launch-heading">让建议，陪在微信旁</h2><p class="field-note">桌面悬浮 · 贴边跟随 · 随时收起</p></div></div>
+      <button id="desktop-launch" class="primary-button" type="button" disabled>启动悬浮助手</button>
+      <p id="desktop-launch-status" class="field-note" role="status" aria-live="polite">正在检查桌面助手…</p>
+      <p class="desktop-launch-privacy">仅打开设置窗口。聊天读取和云端建议仍需另行确认。</p>
+    </section>
     <div class="compact-content" hidden>
       <div class="compact-toolbar"><span id="compact-context">选择一份归档，准备回复</span><button id="expand-window" type="button" class="quiet-button">展开</button></div>
       <div id="live-compact-bar" class="live-compact-bar" hidden><span id="live-compact-status" role="status"></span><button id="live-compact-stop" class="quiet-button" type="button" hidden>停止</button></div>

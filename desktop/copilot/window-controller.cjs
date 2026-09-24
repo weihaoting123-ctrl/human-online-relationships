@@ -6,12 +6,13 @@ class WindowController {
   constructor({view, ownPid, clock=Date.now, workArea, toDip, ready=()=>true, onState=()=>{}}) {
     this.view=view; this.ownPid=ownPid; this.clock=clock; this.workArea=workArea; this.toDip=toDip; this.onState=onState; this.ready=ready;
     this.frame=null; this.lastSeen=0; this.mode='dock'; this.size='compact'; this.effectiveSize='compact';
-    this.paused=false; this.visible=false; this.lastBounds=null; this.floating=null; this.allowOverlap=false;
+    this.paused=false; this.presentation=false; this.presentationArea=null;
+    this.visible=false; this.lastBounds=null; this.floating=null; this.allowOverlap=false;
     this.error=null; this.lastNotice='';
   }
   snapshot() {
     return {state:this.error?'error':this.frame?.state||'waiting',target:this.frame?.state==='bound'?this.frame.target:null,
-      mode:this.mode,size:this.size,effectiveSize:this.effectiveSize,paused:this.paused,error_code:this.error};
+      mode:this.mode,size:this.size,effectiveSize:this.effectiveSize,paused:this.paused,presentation:this.presentation,error_code:this.error};
   }
   emit() { const notice=JSON.stringify(this.snapshot());if(notice!==this.lastNotice){this.lastNotice=notice;this.onState(this.snapshot())} }
   hide() { if(this.visible){this.view.hide();this.visible=false} }
@@ -34,7 +35,13 @@ class WindowController {
   pause(value) {
     if(typeof value!=='boolean')throw new TypeError('Invalid pause state');
     if(value!==this.paused){this.frame=null;this.lastSeen=0}
+    if(!value){this.presentation=false;this.presentationArea=null}
     this.paused=value;this.render();
+  }
+  present(workArea) {
+    this.paused=true;this.presentation=true;this.presentationArea={...workArea};
+    this.frame=null;this.lastSeen=0;this.error=null;this.size='expanded';this.allowOverlap=true;
+    this.render();
   }
   setFloating(bounds) {this.floating={x:bounds.x,y:bounds.y};this.lastBounds=null;this.mode='float';this.render()}
   onUserMove(bounds) {
@@ -51,6 +58,18 @@ class WindowController {
     } catch {this.fail('WINDOW_GEOMETRY_ERROR')}
   }
   render() {
+    if(this.presentation&&this.ready()&&!this.error){
+      try{
+        const area=this.presentationArea;
+        const placement=placePanel({target:area,workArea:area,size:SIZES[this.size],mode:'float',
+          floating:{x:area.x+(area.width-SIZES[this.size].width)/2,y:area.y+(area.height-SIZES[this.size].height)/2}});
+        this.effectiveSize=this.size;
+        const bounds={x:placement.x,y:placement.y,width:placement.width,height:placement.height};
+        if(JSON.stringify(bounds)!==JSON.stringify(this.lastBounds)){this.view.setBounds(bounds);this.lastBounds=bounds}
+        if(!this.visible){this.view.showInactive();this.visible=true}
+        this.emit();return;
+      }catch{this.fail('WINDOW_GEOMETRY_ERROR');return}
+    }
     const frame=this.frame;
     if(!this.ready()||this.paused||this.error||!frame||frame.state!=='bound'||!frame.visible||frame.minimized
       ||(!frame.foreground&&frame.foreground_pid!==this.ownPid)){this.hide();this.emit();return}

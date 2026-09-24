@@ -86,6 +86,10 @@ class CopilotBrowserTests(unittest.TestCase):
         self.binding_token = None
         self.binding_session = None
         self.binding_session_counter = 0
+        self.desktop = {'supported': True, 'installed': True, 'state': 'stopped', 'code': 'DESKTOP_STOPPED'}
+        self.hold_desktop = False
+        self.pending_desktop = None
+        self.fail_desktop = False
         self.page.on('pageerror', lambda error: self.errors.append(str(error)))
         self.page.on('dialog', lambda dialog: (self.dialogs.append(dialog.message), dialog.dismiss()))
         self.page.on('request', lambda request: self.requests.append(request.url))
@@ -112,7 +116,18 @@ class CopilotBrowserTests(unittest.TestCase):
         body = request.post_data_json if request.method == 'POST' else None
         if body is not None:
             self.writes.append((path, body))
-        if path == '/api/modules':
+        if path == '/api/copilot/desktop':
+            self.reply(route, {'status': 'ok', 'desktop': self.desktop})
+        elif path == '/api/copilot/desktop/launch':
+            response = {'status': 'ok', 'desktop': {**self.desktop,
+                        'state': 'launch_requested', 'code': 'DESKTOP_LAUNCH_REQUESTED'}}
+            if self.hold_desktop:
+                self.pending_desktop = (route, response)
+            elif self.fail_desktop:
+                self.reply(route, {'status': 'error', 'error': 'private-launch-detail'}, 500)
+            else:
+                self.reply(route, response, 202)
+        elif path == '/api/modules':
             if body:
                 self.enabled = body.get('enabled') is True
             self.reply(route, {'status': 'ok', 'modules': self.modules_override or [
@@ -278,6 +293,69 @@ class CopilotBrowserTests(unittest.TestCase):
         self.expect(self.page.locator('#date-from')).to_have_value('2026-03-02')
         self.expect(self.page.locator('#date-to')).to_have_value('2026-09-20')
         self.assertEqual(self.page.locator('input[type=checkbox]:checked').count(), 0)
+
+    def test_desktop_launch_visible_without_modules_and_keyboard_accessible(self):
+        self.enabled = self.analysis_enabled = False
+        self.page.set_viewport_size({'width': 320, 'height': 700})
+        self.open()
+        self.expect(self.page.locator('#desktop-launch')).to_have_text('启动悬浮助手')
+        self.assertEqual(self.writes, [])
+        self.assertLess(self.page.locator('#desktop-launch').bounding_box()['y'], 360)
+        self.assertTrue(self.page.evaluate('document.documentElement.scrollWidth <= innerWidth'))
+        self.page.locator('#desktop-launch').focus()
+        self.page.keyboard.press('Enter')
+        self.expect(self.page.locator('#desktop-launch-status')).to_contain_text('已请求打开')
+        self.assertEqual(self.writes, [('/api/copilot/desktop/launch', {})])
+
+    def test_desktop_running_opens_existing_and_pending_disables_repeats(self):
+        self.desktop.update(state='running', code='DESKTOP_RUNNING')
+        self.hold_desktop = True
+        self.open()
+        self.expect(self.page.locator('#desktop-launch')).to_have_text('打开悬浮助手')
+        self.page.locator('#desktop-launch').click()
+        self.expect(self.page.locator('#desktop-launch')).to_be_disabled()
+        self.page.locator('#desktop-launch').evaluate('(button)=>button.click()')
+        self.assertEqual(self.writes, [('/api/copilot/desktop/launch', {})])
+        self.reply(*self.pending_desktop, 202)
+        self.expect(self.page.locator('#desktop-launch-status')).to_contain_text('跟随微信')
+
+    def test_desktop_failure_is_safe_and_never_automatically_retried(self):
+        self.fail_desktop = True
+        self.open()
+        self.page.locator('#desktop-launch').click()
+        self.expect(self.page.locator('#desktop-launch-status')).to_contain_text('不会自动重试')
+        self.expect(self.page.locator('body')).not_to_contain_text('private-launch-detail')
+        self.assertEqual(self.writes, [('/api/copilot/desktop/launch', {})])
+
+    def test_desktop_missing_runtime_disables_launch_without_installing(self):
+        self.desktop.update(installed=False, state='unavailable', code='DESKTOP_NOT_INSTALLED')
+        self.open()
+        self.expect(self.page.locator('#desktop-launch')).to_be_disabled()
+        self.expect(self.page.locator('#desktop-launch-status')).to_contain_text('未安装')
+        self.assertEqual(self.writes, [])
+
+    def test_desktop_unsupported_or_unknown_state_is_not_claimed_running(self):
+        self.desktop.update(supported=False, installed=False, state='unavailable', code='DESKTOP_UNSUPPORTED')
+        self.open()
+        self.expect(self.page.locator('#desktop-launch-status')).to_contain_text('Windows')
+        self.expect(self.page.locator('#desktop-launch')).to_be_disabled()
+        self.desktop.update(supported=True, installed=True, state='unknown', code='DESKTOP_PROBE_TIMEOUT')
+        self.page.reload(wait_until='networkidle')
+        self.expect(self.page.locator('#desktop-launch-status')).to_contain_text('无法确认')
+        self.expect(self.page.locator('#desktop-launch')).not_to_have_text('打开悬浮助手')
+        self.assertEqual(self.writes, [])
+
+    def test_native_hides_launch_card_and_explicit_presentation_can_resume_follow(self):
+        self.open(native=True)
+        self.expect(self.page.locator('#desktop-launch-card')).to_be_hidden()
+        self.assertFalse(any('/api/copilot/desktop' in url for url in self.requests))
+        self.page.evaluate("emitNative({state:'waiting',target:null,paused:true,presentation:true,mode:'dock',size:'expanded'})")
+        self.expect(self.page.locator('#native-status')).to_have_text('设置窗口 · 跟随已暂停')
+        self.expect(self.page.locator('#pause-follow')).to_have_text('跟随微信')
+        self.expect(self.page.locator('#prepare-preview')).to_be_disabled()
+        self.page.locator('#pause-follow').click()
+        self.assertIn(['pause', False], self.page.evaluate('window.bridgeCalls'))
+        self.assertEqual(self.writes, [])
 
     def live_preview(self):
         self.open(native='auto')
