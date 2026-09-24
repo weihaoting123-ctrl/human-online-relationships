@@ -7,6 +7,8 @@
   <title>回复助手 · 人类线上关系可视化</title>
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/copilot/copilot.css">
+  <script src="/copilot/live.js" defer></script>
+  <script src="/copilot/desktop.js" defer></script>
   <script src="/copilot/copilot.js" defer></script>
 </head>
 <body data-size="expanded">
@@ -21,8 +23,15 @@
       </div>
     </header>
     <p id="native-status" class="native-status" role="status">浏览器模式 · 不跟随窗口</p>
+    <section id="desktop-launch-card" class="desktop-launch-card" aria-labelledby="desktop-launch-heading" hidden>
+      <div class="desktop-launch-heading"><span class="desktop-launch-mark" aria-hidden="true">↗</span><div><h2 id="desktop-launch-heading">让建议，陪在微信旁</h2><p class="field-note">桌面悬浮 · 贴边跟随 · 随时收起</p></div></div>
+      <button id="desktop-launch" class="primary-button" type="button" disabled>启动悬浮助手</button>
+      <p id="desktop-launch-status" class="field-note" role="status" aria-live="polite">正在检查桌面助手…</p>
+      <p class="desktop-launch-privacy">仅打开设置窗口。聊天读取和云端建议仍需另行确认。</p>
+    </section>
     <div class="compact-content" hidden>
       <div class="compact-toolbar"><span id="compact-context">选择一份归档，准备回复</span><button id="expand-window" type="button" class="quiet-button">展开</button></div>
+      <div id="live-compact-bar" class="live-compact-bar" hidden><span id="live-compact-status" role="status"></span><button id="live-compact-stop" class="quiet-button" type="button" hidden>停止</button></div>
       <article id="compact-suggestion" class="compact-suggestion" hidden>
         <div class="compact-toolbar"><span class="style-label">自然一点</span><button id="compact-copy" class="copy-button" type="button">复制</button></div>
         <p id="compact-reply"></p>
@@ -35,7 +44,16 @@
         <select id="window-mode"><option value="dock">贴边跟随</option><option value="float">自由悬浮</option></select>
         <button id="pause-follow" class="quiet-button" type="button" aria-pressed="false">暂停跟随</button>
       </div>
-      <p class="capability-note">联系人与实时消息识别未接入。请手动选择会话；建议依据本机归档和你补充的文字。</p>
+      <section class="recognition-controls" aria-label="当前会话识别">
+        <label for="context-mode">会话选择方式</label>
+        <select id="context-mode"><option value="manual">手动选择归档</option><option value="auto" disabled>识别当前微信标题</option></select>
+        <p id="recognition-status" class="capability-note" role="status">浏览器模式：请手动选择归档会话。</p>
+        <button id="auto-calibrate-title" class="quiet-button" type="button" hidden>自动校准标题</button>
+        <button id="calibrate-title" class="quiet-button" type="button" hidden>标记标题区域</button>
+        <p id="auto-calibration-result" class="field-note" role="status"></p>
+        <p id="calibration-help" class="field-note" hidden>先点自动校准：仅在本机检查顶部标题条，不保存截图。请保持微信在前台、标题无遮挡。支持 Windows 微信 4.1.13 的标准布局；无法确定时不会保存。也可手动标记：鼠标移到标题左上角和右下角，各按 Ctrl+Alt+F8，四周留空白并在 60 秒内完成。</p>
+      </section>
+      <p class="capability-note">标题只用于建议同名归档，不能核验当前微信账号或联系人身份。默认使用归档；限时辅助需另外授权固定来源的新文字。</p>
 
       <section class="context-card" aria-labelledby="context-heading">
         <div class="context-heading"><span class="eyebrow">本次会话</span><button id="choose-context" class="text-button" type="button">选择 / 修改</button></div>
@@ -68,11 +86,27 @@
       <button id="prepare-preview" class="primary-button" type="button" disabled>核对本次发送范围</button>
       <p id="feedback" class="feedback" role="status" aria-live="polite"></p>
 
+      <section class="live-card" aria-labelledby="live-heading">
+        <div class="context-heading"><h2 id="live-heading">新消息，顺手接下去</h2><span class="live-badge">限时辅助</span></div>
+        <p class="field-note">不必手动复制。开启后只读固定私聊的新文字，更新这里的建议，不抢焦点、不代发。约每 5 秒检查一次，实际延迟取决于本机读取耗时。</p>
+        <p id="live-status" class="live-status" role="status" aria-live="polite"></p>
+        <button id="live-prepare" class="quiet-button" type="button" disabled>核对并开启自动建议</button>
+        <button id="live-stop" class="quiet-button" type="button" hidden>停止本次辅助</button>
+        <section id="live-consent" class="consent-card" aria-label="固定会话限时授权" hidden>
+          <h2>只授权这个固定会话</h2><dl id="live-facts"></dl>
+          <p>历史范围和授权期间新文字会发给上方服务商，可能产生费用。限时模式不使用“补充最新一句”，不含图片、语音或转写。自动脱敏不保证完全匿名。</p>
+          <p>不会自动换人。标题只能尽力发现切换，同名等情况可能漏检；即使漏检，也只会读取和发送本次获准的固定来源。无法确认窗口时停止，恢复后需重新授权。</p>
+          <label class="binding-confirmation"><input id="live-confirmed" type="checkbox"><span>我已核对账号与固定联系人，同意上述历史和未来 15 分钟内的新文字用于最多 6 次云端建议，知道失败可能已计费且不自动重试。</span></label>
+          <div class="consent-actions"><button id="live-start" class="primary-button" type="button" disabled>授权这个会话，开启 15 分钟</button><button id="live-cancel" class="text-button" type="button">取消</button></div>
+        </section>
+      </section>
+
       <section id="consent-panel" class="consent-card" aria-labelledby="consent-heading" hidden>
         <h2 id="consent-heading">确认这一次生成</h2>
         <dl id="preview-facts"></dl>
         <p>仅发送所选范围内的脱敏文字与补充内容，不含图片、音频。自动脱敏无法保证自由文本完全匿名。</p>
         <p class="cost-note">最多调用 1 次，可能产生服务商费用。失败不会自动重试；再次调用可能重复计费。</p>
+        <label id="binding-confirmation" class="binding-confirmation" hidden><input id="binding-confirmed" type="checkbox"><span>我已核对当前微信账号、联系人与上方归档一致；标题匹配本身不能核验身份。</span></label>
         <div class="consent-actions"><button id="confirm-run" class="primary-button" type="button" disabled>确认发送并生成一次</button><button id="cancel-preview" class="text-button" type="button">取消</button></div>
       </section>
 

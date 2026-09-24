@@ -57,6 +57,7 @@ class CopilotApiTests(CopilotFixture):
 
     def test_security_guards_and_no_implicit_calls(self):
         for path, body in [('/api/copilot/status', None), ('/api/copilot/preview', self.request),
+                           ('/api/copilot/binding/start', {}), ('/api/copilot/binding', {}),
                            ('/api/copilot/run', {'consent': True})]:
             with self.subTest(path=path):
                 self.assertEqual(self.http(path, body, **{'X-Local-Token': None})[0], 403)
@@ -68,6 +69,44 @@ class CopilotApiTests(CopilotFixture):
             self.assertEqual(self.http('/api/copilot/preview', self.request)[0], 200)
             self.assertEqual(self.http('/api/copilot/run', {'consent': False})[0], 400)
         transport.assert_not_called()
+
+    def test_binding_routes_use_only_existing_metadata_and_require_fresh_candidate_confirmation(self):
+        # The original name and source are metadata prepared by the archive index.
+        rows = self.repository.snapshot()['conversations']
+        summaries = [item['source'] for item in rows]
+        next(item for item in summaries if item['id'] == self.bundle.name)['source'] = 'wechat-local-readonly'
+        self.repository.reconcile(summaries)
+        with mock.patch.object(app, 'source_bundle_summaries', side_effect=AssertionError('body scan')), \
+             mock.patch.object(ai, '_source', side_effect=AssertionError('body read')):
+            code, session = self.http('/api/copilot/binding/start', {})
+            self.assertEqual(code, 200)
+            observation = {'session_id': session['session_id'], 'seq': 1, 'target': 'synthetic-window',
+                           'state': 'observed', 'title': '合成人物', 'source': 'local_ocr'}
+            code, candidate = self.http('/api/copilot/binding', observation)
+            self.assertEqual(code, 200)
+            self.assertEqual(candidate['state'], 'suggested')
+            self.assertFalse(candidate['account_verified'])
+            self.assertEqual(candidate['bundle_id'], self.bundle.name)
+            self.assertNotIn('title', candidate)
+        code, preview = self.http('/api/copilot/preview', {**self.request, 'binding_token': candidate['binding_token']})
+        self.assertEqual(code, 200)
+        run = {'preview_id': preview['preview_id'], 'consent': True, 'binding_revision': 7}
+        with mock.patch.object(ai, '_request_json') as transport:
+            self.assertEqual(self.http('/api/copilot/run', run)[0], 400)
+            self.assertEqual(self.http('/api/copilot/binding', {
+                **observation, 'seq': 2, 'state': 'unavailable', 'title': ''})[1]['state'], 'unavailable')
+            self.assertEqual(self.http('/api/copilot/run', {**run, 'binding_confirmed': True})[0], 400)
+            self.assertEqual(self.http('/api/copilot/preview', {
+                **self.request, 'binding_token': candidate['binding_token']})[0], 400)
+            transport.assert_not_called()
+
+    def test_binding_start_rejects_unexpected_fields_and_disabled_module(self):
+        code, value = self.http('/api/copilot/binding/start', {'title': 'PRIVATE'})
+        self.assertEqual(code, 400)
+        self.assertNotIn('PRIVATE', str(value))
+        self.registry.update({'id': 'copilot', 'enabled': False, 'expected_version': 1})
+        self.assertEqual(self.http('/api/copilot/binding/start', {})[0], 409)
+        self.assertEqual(self.http('/api/copilot/binding', {})[0], 409)
 
     def test_single_sync_result_and_hidden_or_disabled_stale_preview(self):
         code, preview = self.http('/api/copilot/preview', self.request)

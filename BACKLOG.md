@@ -22,7 +22,33 @@
 
 本轮实现 Windows 窗口伴随、磁吸/悬浮、有限单会话归档上下文和手工补充、显式单次回复建议与复制。默认关闭，不自动外发、不读当前聊天、不替用户发送；模型语义仍需用户判断。原生合成窗口、真实桌面壳合成流程、浏览器/后端与独立审查构成本机证据；当前 CI、依赖基线、微信版本/混合 DPI 实机矩阵另行验收，不提前标记正式 1.0。
 
-实时当前联系人/消息捕获、最新同城活动来源、macOS/Linux 原生伴随和开机自启保留为后续候选，不用历史归档或模拟活动冒充已实现。
+实时消息捕获、最新同城活动来源、macOS/Linux 原生伴随和开机自启保留为后续候选，不用历史归档或模拟活动冒充已实现。
+
+## 用户指定独立迭代：COPILOT-04 / 1.0.0-rc.5
+
+P2，候选待验收。[主 Issue #49](https://github.com/weihaoting123-ctrl/human-online-relationships/issues/49) · [PR #47](https://github.com/weihaoting123-ctrl/human-online-relationships/pull/47) · [设计](docs/superpowers/specs/2026-09-24-copilot-launch-button.md)。
+
+浏览器顶部一键启动或打开现有桌面助手；固定本机目标、同源校验和重复点击保护；明确暂停的设置窗口与“跟随微信”入口。按钮不授权聊天读取、不调用模型、不改变同步任务。独立合成回归、review 与部署验证见同版审查记录；正式 1.0 的实机兼容性门槛仍保留。
+
+## 用户指定独立迭代：COPILOT-03 / 1.0.0-rc.4
+
+P2，待实机验收。[主 Issue #48](https://github.com/weihaoting123-ctrl/human-online-relationships/issues/48) · [PR #47](https://github.com/weihaoting123-ctrl/human-online-relationships/pull/47) · [候选审查记录](docs/reviews/v1.0.0-rc.4-review.md)。
+
+固定私聊近期文字辅助：默认关闭，用户另行核对固定来源、历史范围、未来文字与接收方后限时自动建议。15 分钟 / 6 次尝试 / 20 秒间隔；基线不发云、稳定身份去重、只读副本、我方文字取消待生成内容、停止与未知失败不自动恢复。UI 与服务端、读取器分别合成验收。
+
+这是可验证的固定来源能力，不假装机器证明当前 UI 身份。OCR 仅尽力暂停，同名切换可能漏检但不会自动改变发送对象。实际读取延迟、真实微信兼容性及实际模型质量仍待授权验收，不能据此关闭正式 1.0 验收项。见[规格](docs/superpowers/specs/2026-09-24-pinned-live-copilot.md)与[计划](docs/superpowers/plans/2026-09-24-pinned-live-copilot.md)。
+
+## 用户指定独立迭代：COPILOT-02 / 1.0.0-rc.3
+
+当前会话本机标题识别，P2，待验收。[主 Issue #46](https://github.com/weihaoting123-ctrl/human-online-relationships/issues/46) · [设计](docs/superpowers/specs/2026-09-24-copilot-auto-context-design.md) · [审查记录](docs/reviews/v1.0.0-rc.2-review.md) · [使用与限制](docs/copilot.md)。
+
+Windows 微信 4.1.13.x 通过一次性标题区域校准、内存中 OCR、唯一同名归档候选与过期绑定完成自动选择。匹配不等于账号/联系人身份认证；每次发送仍需核对候选、范围及费用。切换、失联、暂停、过期或元数据变化撤销旧授权。合成材料验收，不读取或发布真实标题、截图、正文。实机首次校准、更多版本与混合 DPI 保留验收门槛，不提前标正式 1.0。
+
+RC3 增补一次点击的本机自动校准，不必手动标角；受支持标准布局的固定顶部条带两轮一致才保存。失败可保留手动标记，不扩张截图范围。见[有界计划](docs/plans/2026-09-24-title-auto-calibration.md)。
+
+RC6 修复标准外窗坐标与小字号中文 OCR 的校准失败，复用 #46 / PR #47，不新增重复需求；保留原图空白边缘、双样本与身份核对。见[修复边界与验收](docs/plans/2026-09-24-title-calibration-rc6.md)。完整实机链路与其他布局仍待验收。
+
+RC7 继续同一需求，修复窗口 DC 黑色位图的实际采集环节，统一可视边框坐标并要求旧区域重新校准；见[采集修复与回退边界](docs/plans/2026-09-24-title-capture-rc7.md)。不将 OCR 候选当作联系人身份认证，保留正式 1.0 兼容性验收门槛。
 
 ## A：先修好首次使用闭环（v0.1.1，已发布）
 

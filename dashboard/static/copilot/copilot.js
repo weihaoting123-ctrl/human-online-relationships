@@ -4,10 +4,18 @@
   'use strict';
   const $ = (selector) => document.querySelector(selector);
   const bridge = window.copilotDesktop;
+  let live = null;
+  const recognitionAvailable = ['conversationState', 'onConversation', 'setRecognition', 'refreshConversation']
+    .every((method) => typeof bridge?.[method] === 'function');
+  const OBSERVATION_TTL_MS = 9500;
   const state = {
     revision: 0, conversations: [], modules: [], configured: false, loaded: false,
     preview: null, previewBusy: false, runBusy: false, loading: false, enabling: false,
     nativeTarget: null, nativeSeen: false, nativeSequence: 0, paused: false, compactReply: '',
+    mode: recognitionAvailable ? 'auto' : 'manual', modeEpoch: 0, observationVersion: 0,
+    observationSeq: -1, observation: null, observationKey: '', bindingToken: null,
+    sessionId: null, serverSeq: 0, bindingQueue: Promise.resolve(), bindingTimer: null,
+    pendingObservation: null, autoBusy: false, autoAttempt: 0,
   };
   const make = (tag, className, text) => {
     const node = document.createElement(tag);
@@ -27,7 +35,7 @@
   }
   async function request(path, body) {
     const controller = new AbortController();
-    const timeout = window.setTimeout(() => controller.abort(), path.endsWith('/run') ? 130000 : 30000);
+    const timeout = window.setTimeout(() => controller.abort(), path.includes('/live/') ? 240000 : path.endsWith('/run') ? 130000 : path.includes('/binding') ? 8000 : 30000);
     try {
       const response = await fetch(path, {
         method: body === undefined ? 'GET' : 'POST', credentials: 'same-origin',
@@ -36,7 +44,10 @@
       });
       if (!response.ok) throw new Error('request-rejected');
       const payload = await response.json();
-      if (!payload || typeof payload !== 'object' || Array.isArray(payload) || payload.status !== 'ok') throw new Error('invalid-response');
+      if (!payload || typeof payload !== 'object' || Array.isArray(payload)
+        || (path === '/api/copilot/binding'
+          ? !['suggested', 'ambiguous', 'unavailable'].includes(payload.state) || payload.account_verified !== false
+          : payload.status !== 'ok')) throw new Error('invalid-response');
       return payload;
     } finally { window.clearTimeout(timeout); }
   }
@@ -51,6 +62,7 @@
       date_from: $('#date-from').value, date_to: $('#date-to').value,
       max_messages: Number($('#max-messages').value), direction: $('#direction').value,
       latest_draft: $('#latest-draft').value, binding_revision: state.revision,
+      ...(state.mode === 'auto' && state.bindingToken ? { binding_token: state.bindingToken } : {}),
     };
   }
   function validScope() {
@@ -62,12 +74,18 @@
       && ['closer', 'relaxed', 'invite'].includes(scope.direction) && scope.latest_draft.length <= 4000);
   }
   function ready() {
-    return !state.paused && state.loaded && state.configured && moduleEnabled('copilot') && moduleEnabled('analysis') && validScope();
+    return !state.paused && state.loaded && state.configured && moduleEnabled('copilot') && moduleEnabled('analysis')
+      && (state.mode !== 'auto' || Boolean(state.bindingToken) && observationFresh(state.observation)) && validScope();
   }
   function renderControls() {
-    $('#prepare-preview').disabled = !ready() || state.previewBusy || state.runBusy || state.loading || state.enabling;
+    $('#prepare-preview').disabled = !ready() || live?.blocked() || state.previewBusy || state.runBusy || state.loading || state.enabling;
     $('#prepare-preview').textContent = state.previewBusy ? '正在核对范围…' : state.runBusy ? '正在生成…' : '核对本次发送范围';
-    $('#confirm-run').disabled = !ready() || !state.preview || state.previewBusy || state.runBusy || state.loading;
+    $('#confirm-run').disabled = !ready() || live?.blocked() || !state.preview || state.previewBusy || state.runBusy || state.loading
+      || (state.mode === 'auto' && !$('#binding-confirmed').checked);
+    $('#contact-select').disabled = state.mode === 'auto';
+    $('#calibrate-title').disabled = state.paused || state.mode !== 'auto' || state.autoBusy;
+    $('#auto-calibrate-title').disabled = state.paused || state.mode !== 'auto';
+    $('#auto-calibrate-title').textContent = state.autoBusy ? '取消自动校准' : '自动校准标题';
     $('#refresh-status').disabled = state.loading || state.enabling;
     $('#enable-copilot').disabled = state.enabling || state.loading || !moduleEnabled('analysis');
     $('#enable-copilot').hidden = !moduleById('copilot') || moduleEnabled('copilot');
@@ -81,12 +99,9 @@
     else if (selected() && !validScope()) message = '请选择归档日期内的范围，条数上限为 200。';
     else if (selected()) message = '范围预览在本机完成，确认后才会调用模型。';
     $('#module-status').textContent = message;
+    live?.render();
   }
-  function invalidate({ clearPerson = false, clearDraft = false } = {}) {
-    state.revision += 1;
-    state.preview = null;
-    $('#consent-panel').hidden = true;
-    $('#preview-facts').replaceChildren();
+  function clearResult() {
     $('#replies-list').replaceChildren();
     state.compactReply = '';
     $('#compact-reply').textContent = '';
@@ -97,11 +112,203 @@
     $('#caveats').hidden = true;
     $('#replies-empty').hidden = false;
     $('#topics-empty').hidden = false;
+  }
+  function invalidate({ clearPerson = false, clearDraft = false } = {}) {
+    live?.invalidate();
+    state.revision += 1;
+    state.preview = null;
+    $('#binding-confirmed').checked = false;
+    $('#binding-confirmation').hidden = true;
+    $('#consent-panel').hidden = true;
+    $('#preview-facts').replaceChildren();
+    clearResult();
     if (clearPerson) $('#contact-select').value = '';
     if (clearDraft || clearPerson) $('#latest-draft').value = '';
     if (clearPerson) renderContext(true);
     feedback();
     renderControls();
+  }
+  const titleReasons = {
+    TITLE_CALIBRATION_REQUIRED: '首次使用或升级后，请自动校准或标记微信标题区域，随后切换聊天会自动识别。',
+    TITLE_MARK_TOP_LEFT: '将鼠标移到标题左上角，按 Ctrl+Alt+F8；请留少量空白。',
+    TITLE_MARK_BOTTOM_RIGHT: '将鼠标移到标题右下角，按 Ctrl+Alt+F8 完成；请留少量空白。',
+    TITLE_STABILIZING: '会话标题正在变化，等待稳定后再建议归档。',
+    TITLE_PAUSED: '自动识别已暂停。',
+    TITLE_UNAVAILABLE: '当前会话标题暂不可识别，请等待或手动选择归档。',
+    TITLE_AUTO_CALIBRATING: '正在本机定位标题条，请保持微信前台且无遮挡…',
+    TITLE_CALIBRATION_SAVED: '标题区域已保存，随后会连续检查识别结果。',
+    TITLE_OCCLUDED: '标题条被遮挡或超出屏幕，未保存；请移开遮挡后再校准。',
+    TITLE_CAPTURE_UNAVAILABLE: '未能取得可用的标题像素，未保存；请保持微信可见后再校准，不会自动重试。',
+    TITLE_DPI_UNAVAILABLE: '无法核验屏幕缩放坐标，未保存；请重新打开助手后再校准，不会自动重试。',
+    TITLE_WINDOW_UNAVAILABLE: '未找到唯一可用的前台微信窗口，请保持微信可见后再校准。',
+    TITLE_TARGET_CHANGED: '校准期间窗口或前台发生变化，未保存；请保持窗口稳定后再试。',
+    TITLE_AUTO_CALIBRATION_UNSTABLE: '两次标题检查不一致，未保存；请保持会话和窗口稳定。',
+    TITLE_AUTO_CALIBRATION_LAYOUT_UNSUPPORTED: '当前窗口布局不支持自动校准，请使用手动标记。',
+    TITLE_AUTO_CALIBRATION_UNREADABLE: '标题条未读到唯一完整文字，未保存；可改用手动标记。',
+    TITLE_AUTO_CALIBRATION_UNAVAILABLE: '本机自动校准未完成，原设置保留；可改用手动标记。',
+    TITLE_AUTO_FAILED: '本机自动校准未完成，原设置保留；不会自动重试。',
+    TITLE_AUTO_TIMEOUT: '本机校准超时，原设置保留；不会自动重试。',
+    TITLE_CALIBRATION_CANCELLED: '自动校准已取消，原设置保留。',
+    TITLE_SAVE_FAILED: '无法保存标题区域，未完成校准。',
+  };
+  function clearAutomatic() {
+    window.clearTimeout(state.bindingTimer);
+    state.bindingTimer = null;
+    state.bindingToken = null;
+    invalidate({ clearPerson: true });
+  }
+  function recognitionStatus(message, reason = '') {
+    $('#recognition-status').textContent = message;
+    const marking = ['TITLE_MARK_TOP_LEFT', 'TITLE_MARK_BOTTOM_RIGHT'].includes(reason);
+    $('#calibrate-title').textContent = marking ? '取消校准' : '标记标题区域';
+    $('#calibration-help').hidden = state.mode !== 'auto';
+  }
+  function bindingFailure() {
+    state.observationVersion += 1;
+    // The server may have restarted or expired this volatile session. The next
+    // observation must establish a new session before it can suggest a bundle.
+    state.sessionId = null;
+    clearAutomatic();
+    recognitionStatus('本机识别连接暂不可用，请等待新观察或手动选择归档。');
+  }
+  function observationFresh(frame) {
+    if (!frame) return false;
+    if (frame.state !== 'observed') return true;
+    const age = performance.now() - frame.receivedAt;
+    return Number.isFinite(age) && age >= 0 && age < OBSERVATION_TTL_MS;
+  }
+  function expireObservation() {
+    const latestExpired = !observationFresh(state.observation);
+    if (latestExpired) {
+      state.observationVersion += 1;
+      state.observation = null;
+      state.observationKey = '';
+    }
+    clearAutomatic();
+    recognitionStatus('识别已过期，请等待最新标题或手动选择归档。');
+    return latestExpired;
+  }
+  function queueObservation(frame) {
+    if (!state.loaded || !moduleEnabled('copilot') || state.mode !== 'auto' || state.paused) return state.bindingQueue;
+    if (!observationFresh(frame)) {
+      expireObservation();
+      return revokeSession();
+    }
+    const version = state.observationVersion, epoch = state.modeEpoch;
+    const tail = state.pendingObservation;
+    if (tail && !tail.running && tail.version === version && tail.epoch === epoch) {
+      tail.frame = frame;
+      return state.bindingQueue;
+    }
+    const pending = { frame, version, epoch, running: false };
+    state.pendingObservation = pending;
+    // Preserve observation order, including intermediate unavailable frames.
+    // HTTP results can only update the latest semantic observation generation.
+    state.bindingQueue = state.bindingQueue.then(async () => {
+      pending.running = true;
+      frame = pending.frame;
+      if (!state.sessionId) {
+        const session = await request('/api/copilot/binding/start', {});
+        if (!/^[a-f0-9]{48}$/.test(session.session_id)) throw new Error('invalid-session');
+        state.sessionId = session.session_id;
+        state.serverSeq = 0;
+      }
+      const seq = ++state.serverSeq;
+      // Waiting for the session or an earlier request cannot refresh a title's
+      // age. Expired queued observations only revoke; they never carry a title.
+      const sentObserved = frame.state === 'observed' && observationFresh(frame);
+      const result = await request('/api/copilot/binding', {
+        session_id: state.sessionId, seq, target: sentObserved ? frame.target : '',
+        state: sentObserved ? 'observed' : 'unavailable',
+        title: sentObserved ? frame.title : '', source: 'local_ocr',
+      });
+      if (epoch !== state.modeEpoch || version !== state.observationVersion || state.mode !== 'auto' || state.paused) return;
+      if (result.observation_seq !== seq) throw new Error('stale-observation');
+      if (!observationFresh(frame)) {
+        if (expireObservation() && sentObserved) revokeSession();
+        return;
+      }
+      const item = state.conversations.find((value) => value.bundle_id === result.bundle_id);
+      if (result.state === 'suggested' && frame.state === 'observed' && item && /^[a-f0-9]{48}$/.test(result.binding_token)) {
+        if (state.bindingToken !== result.binding_token || $('#contact-select').value !== item.bundle_id) {
+          clearAutomatic();
+          state.bindingToken = result.binding_token;
+          $('#contact-select').value = item.bundle_id;
+          renderContext(true);
+        }
+        recognitionStatus('标题同名归档已找到 · 待核对账号与联系人身份。');
+        window.clearTimeout(state.bindingTimer);
+        state.bindingTimer = window.setTimeout(() => {
+          if (expireObservation()) revokeSession();
+        }, Math.max(0, OBSERVATION_TTL_MS - (performance.now() - frame.receivedAt)));
+      } else {
+        clearAutomatic();
+        recognitionStatus(frame.state === 'unavailable' ? titleReasons[frame.reason] || titleReasons.TITLE_UNAVAILABLE
+          : result.state === 'ambiguous' ? '存在同名归档，请手动选择并核对。'
+            : '没有可用的同名微信归档，请手动选择或刷新状态。', frame.reason);
+      }
+      renderControls();
+    }).catch(() => { if (epoch === state.modeEpoch && state.mode === 'auto') bindingFailure(); });
+    return state.bindingQueue;
+  }
+  function acceptConversation(value) {
+    if (!recognitionAvailable || state.mode !== 'auto') return;
+    if (Number.isSafeInteger(value?.seq) && value.seq <= state.observationSeq) return;
+    const valid = value && Number.isSafeInteger(value.seq) && value.seq >= 0 && value.source === 'local_ocr'
+      && ['observed', 'unavailable'].includes(value.state)
+      && (value.state === 'unavailable' || (typeof value.title === 'string' && value.title.trim()
+        && value.title.length <= 200 && !/[\p{C}\u2026\u22ef]/u.test(value.title) && !value.title.includes('...')
+        && typeof value.target === 'string' && value.target.length > 0 && value.target.length <= 128));
+    if (valid) state.observationSeq = value.seq;
+    const frame = valid ? { state: value.state, title: value.state === 'observed' ? value.title : '',
+      target: typeof value.target === 'string' ? value.target : '', reason: value.reason, receivedAt: performance.now() }
+      : { state: 'unavailable', title: '', target: '', reason: 'TITLE_UNAVAILABLE', receivedAt: performance.now() };
+    const key = JSON.stringify([frame.state, frame.target, frame.title]);
+    state.observation = frame;
+    if (key !== state.observationKey) {
+      state.observationKey = key;
+      state.observationVersion += 1;
+      clearAutomatic();
+    }
+    if (frame.state !== 'observed') recognitionStatus(titleReasons[frame.reason] || titleReasons.TITLE_UNAVAILABLE, frame.reason);
+    else if (!state.bindingToken) recognitionStatus(moduleEnabled('copilot')
+      ? '正在核对本机归档名称…' : '本机标题已稳定识别；回复助手未启用，尚未匹配归档。');
+    queueObservation(frame);
+  }
+  function revokeSession() {
+    state.bindingQueue = state.bindingQueue.then(async () => {
+      if (!state.sessionId) return;
+      const sessionId = state.sessionId;
+      state.sessionId = null;
+      await request('/api/copilot/binding', { session_id: sessionId, seq: ++state.serverSeq,
+        target: '', title: '', state: 'unavailable', source: 'local_ocr' });
+    }).catch(() => { /* Local state is already cleared; the server token also expires. */ });
+    return state.bindingQueue;
+  }
+  function changeContextMode() {
+    state.autoAttempt += 1; state.autoBusy = false;
+    $('#auto-calibration-result').textContent = '';
+    state.mode = recognitionAvailable && $('#context-mode').value === 'auto' ? 'auto' : 'manual';
+    state.modeEpoch += 1;
+    state.observationVersion += 1;
+    state.observation = null;
+    state.observationKey = '';
+    clearAutomatic();
+    revokeSession();
+    nativeCall('setRecognition', state.mode === 'auto');
+    recognitionStatus(state.mode === 'auto' ? '等待本机标题识别…' : '手动模式：请选择归档会话并核对范围。');
+    if (state.mode === 'auto') Promise.resolve(bridge.refreshConversation()).then(acceptConversation).catch(bindingFailure);
+    renderControls();
+  }
+  async function freshAutomatic(token) {
+    if (state.mode !== 'auto') return true;
+    const sequence = state.observationSeq, epoch = state.modeEpoch;
+    const frame = await bridge.refreshConversation();
+    acceptConversation(frame);
+    await state.bindingQueue;
+    return epoch === state.modeEpoch && state.mode === 'auto' && state.observationSeq > sequence
+      && state.observation?.state === 'observed' && observationFresh(state.observation)
+      && Boolean(token) && token === state.bindingToken && !state.paused;
   }
   function renderContext(resetDates = false) {
     const item = selected();
@@ -161,7 +368,10 @@
       state.configured = false;
       state.modules = [];
       feedback('无法读取本机状态。请检查服务后刷新；不会自动发送或重试。', true);
-    } finally { state.loading = false; renderControls(); }
+    } finally {
+      state.loading = false; renderControls();
+      if (state.mode === 'auto' && state.observation) queueObservation(state.observation);
+    }
   }
   async function enable() {
     const module = moduleById('copilot');
@@ -174,11 +384,15 @@
       state.modules = Array.isArray(response.modules) ? response.modules : [];
       feedback('回复助手已启用。每次生成仍需单独确认。');
     } catch (_) { feedback('未能启用回复助手。请刷新状态后核对设置。', true); }
-    finally { state.enabling = false; renderControls(); }
+    finally {
+      state.enabling = false; renderControls();
+      if (state.mode === 'auto' && state.observation) queueObservation(state.observation);
+    }
   }
   function validPreview(payload, scope) {
     return typeof payload.preview_id === 'string' && payload.preview_id.length > 0
       && payload.binding_revision === scope.binding_revision && payload.max_calls === 1
+      && (!scope.binding_token || (payload.binding_required === true && payload.account_verified === false))
       && payload.scope && ['bundle_id', 'date_from', 'date_to', 'max_messages', 'direction'].every((key) => payload.scope[key] === scope[key])
       && payload.recipient?.configured === true && typeof payload.recipient?.model === 'string'
       && typeof payload.recipient?.provider === 'string' && typeof payload.recipient?.endpoint === 'string'
@@ -201,15 +415,23 @@
     append('接收方与模型', `${safeText(payload.recipient.provider, 80)} · ${safeText(payload.recipient.model, 120)}`);
     append('接收地址', safeText(payload.recipient.endpoint, 300));
     append('调用计划', '最多 1 次云端调用');
+    $('#binding-confirmed').checked = false;
+    $('#binding-confirmation').hidden = payload.binding_required !== true;
     $('#consent-panel').hidden = false;
   }
   async function prepare() {
-    if (!ready() || state.previewBusy || state.runBusy || state.loading) return;
-    invalidate();
-    const scope = currentScope();
+    if (!ready() || live?.blocked() || state.previewBusy || state.runBusy || state.loading) return;
+    const revision = state.revision, token = state.bindingToken;
+    let scope;
     state.previewBusy = true;
     renderControls();
     try {
+      if (!await freshAutomatic(token) || revision !== state.revision) {
+        feedback('当前会话已变化或无法重新识别，请重新核对归档；尚未调用模型。', true);
+        return;
+      }
+      invalidate();
+      scope = currentScope();
       const payload = await request('/api/copilot/preview', scope);
       if (scope.binding_revision !== state.revision) return;
       if (!validPreview(payload, scope)) throw new Error('invalid-preview');
@@ -217,7 +439,7 @@
       renderPreview(payload);
       feedback('范围已核对。请检查接收方，决定是否发送这一次。');
     } catch (_) {
-      if (scope.binding_revision === state.revision) feedback('无法准备发送范围。请检查本机设置后重新核对；尚未调用模型。', true);
+      if ((scope?.binding_revision ?? revision) === state.revision) feedback('无法准备发送范围。请检查本机设置后重新核对；尚未调用模型。', true);
     } finally { state.previewBusy = false; renderControls(); }
   }
   function validResult(payload) {
@@ -273,39 +495,61 @@
     $('#compact-suggestion').hidden = false;
   }
   async function run() {
-    if (!ready() || !state.preview || state.previewBusy || state.runBusy || state.loading) return;
+    if (!ready() || live?.blocked() || !state.preview || state.previewBusy || state.runBusy || state.loading
+      || (state.mode === 'auto' && !$('#binding-confirmed').checked)) return;
     const preview = state.preview;
-    const revision = state.revision;
-    state.preview = null;
+    const revision = state.revision, token = state.bindingToken;
+    let sent = false;
     state.runBusy = true;
-    $('#consent-panel').hidden = true;
     renderControls();
-    feedback('正在生成；本次最多调用一次。你可以继续修改范围，过期结果将被忽略。');
     try {
-      const payload = await request('/api/copilot/run', { preview_id: preview.preview_id, consent: true, binding_revision: revision });
+      if (!await freshAutomatic(token) || revision !== state.revision || preview !== state.preview
+        || (state.mode === 'auto' && !$('#binding-confirmed').checked)) {
+        feedback('当前会话已变化或无法重新识别，请重新核对归档；尚未发送。', true);
+        return;
+      }
+      state.preview = null;
+      $('#consent-panel').hidden = true;
+      feedback('正在生成；本次最多调用一次。你可以继续修改范围，过期结果将被忽略。');
+      sent = true;
+      const payload = await request('/api/copilot/run', { preview_id: preview.preview_id, consent: true, binding_revision: revision,
+        ...(token ? { binding_confirmed: true } : {}) });
       if (revision !== state.revision) return;
       if (payload.binding_revision !== revision || !validResult(payload)) throw new Error('invalid-result');
       renderResult(payload);
       feedback('已生成三种说法。先读一遍，再选择适合你的。');
     } catch (_) {
-      if (revision === state.revision) feedback('请求未完成，调用可能已发生。不会自动重试；再次生成需重新预览确认，可能重复计费。', true);
+      if (revision === state.revision) feedback(sent
+        ? '请求未完成，调用可能已发生。不会自动重试；再次生成需重新预览确认，可能重复计费。'
+        : '无法重新识别当前会话，请重新核对归档；尚未发送。', true);
     } finally { state.runBusy = false; renderControls(); }
   }
   function applyNative(snapshot) {
     if (!snapshot || !['waiting', 'bound', 'ambiguous', 'error'].includes(snapshot.state)) return;
     const wasPaused = state.paused;
     state.paused = snapshot.paused === true;
-    if (state.paused && !wasPaused) invalidate();
+    if (state.paused && !wasPaused) {
+      if (state.mode === 'auto') {
+        state.observationVersion += 1; state.observation = null; state.observationKey = '';
+        clearAutomatic(); revokeSession();
+      }
+      else invalidate();
+    }
     const target = typeof snapshot.target === 'string' ? snapshot.target : null;
     if (state.nativeSeen && target !== state.nativeTarget) {
-      invalidate({ clearPerson: true });
+      if (state.mode === 'auto') {
+        state.observationVersion += 1; state.observation = null; state.observationKey = '';
+        clearAutomatic(); revokeSession();
+      }
+      else invalidate({ clearPerson: true });
       feedback('跟随窗口已变化。请重新选择会话并核对范围。');
     }
     state.nativeSeen = true;
     state.nativeTarget = target;
     const labels = { waiting: '等待窗口', bound: '已绑定窗口', ambiguous: '检测到多个窗口，暂未绑定', error: '窗口跟随暂不可用' };
-    $('#native-status').textContent = `仅窗口跟随 · ${state.paused ? '已暂停' : labels[snapshot.state]}`;
-    $('#pause-follow').textContent = state.paused ? '恢复跟随' : '暂停跟随';
+    const presentation = state.paused && snapshot.presentation === true;
+    $('#native-status').textContent = presentation ? '设置窗口 · 跟随已暂停' : `仅窗口跟随 · ${state.paused ? '已暂停' : labels[snapshot.state]}`;
+    $('#pause-follow').textContent = presentation ? '跟随微信' : state.paused ? '恢复跟随' : '暂停跟随';
     $('#pause-follow').setAttribute('aria-pressed', String(state.paused));
     $('#window-mode').value = snapshot.mode === 'float' ? 'float' : 'dock';
     const size = snapshot.effectiveSize || snapshot.size;
@@ -318,7 +562,37 @@
   $('#choose-context').addEventListener('click', () => {
     nativeCall('edit', true);
     $('#context-settings').open = true;
-    $('#contact-select').focus();
+    $(state.mode === 'auto' ? '#context-mode' : '#contact-select').focus();
+  });
+  $('#context-mode').value = state.mode;
+  $('#context-mode option[value="auto"]').disabled = !recognitionAvailable;
+  $('#context-mode').addEventListener('change', changeContextMode);
+  $('#binding-confirmed').addEventListener('change', renderControls);
+  $('#calibrate-title').hidden = !recognitionAvailable || typeof bridge?.calibrateTitle !== 'function';
+  $('#auto-calibrate-title').hidden = !recognitionAvailable || typeof bridge?.autoCalibrateTitle !== 'function';
+  $('#auto-calibrate-title').addEventListener('click', async () => {
+    const attempt = ++state.autoAttempt, epoch = state.modeEpoch;
+    state.autoBusy = !state.autoBusy;
+    state.observationVersion += 1;
+    state.observation = null; state.observationKey = '';
+    clearAutomatic(); revokeSession();
+    $('#auto-calibration-result').textContent = state.autoBusy ? titleReasons.TITLE_AUTO_CALIBRATING : '正在取消…';
+    renderControls();
+    try {
+      const result = await bridge.autoCalibrateTitle();
+      if (attempt !== state.autoAttempt || epoch !== state.modeEpoch) return;
+      $('#auto-calibration-result').textContent = titleReasons[result?.reason] || titleReasons.TITLE_AUTO_FAILED;
+    } catch (_) {
+      if (attempt === state.autoAttempt) $('#auto-calibration-result').textContent = titleReasons.TITLE_AUTO_FAILED;
+    } finally { if (attempt === state.autoAttempt) { state.autoBusy = false; renderControls(); } }
+  });
+  $('#calibrate-title').addEventListener('click', () => {
+    state.observationVersion += 1;
+    state.observation = null;
+    state.observationKey = '';
+    clearAutomatic();
+    revokeSession();
+    nativeCall('calibrateTitle');
   });
   $('#contact-select').addEventListener('change', () => { invalidate({ clearDraft: true }); renderContext(true); renderControls(); });
   for (const selector of ['#date-from', '#date-to', '#max-messages', '#direction', '#latest-draft']) {
@@ -379,5 +653,23 @@
     } catch (_) { $('#native-status').textContent = '仅窗口跟随 · 状态暂不可用'; }
     window.addEventListener('beforeunload', () => { if (typeof unsubscribe === 'function') unsubscribe(); nativeCall('edit', false); });
   }
+  if (recognitionAvailable) {
+    recognitionStatus('等待本机标题识别…');
+    let unsubscribeConversation;
+    try {
+      unsubscribeConversation = bridge.onConversation(acceptConversation);
+      Promise.resolve(bridge.conversationState()).then(acceptConversation).catch(bindingFailure);
+      nativeCall('setRecognition', true);
+    } catch (_) { bindingFailure(); }
+    window.addEventListener('beforeunload', () => {
+      if (typeof unsubscribeConversation === 'function') unsubscribeConversation();
+      window.clearTimeout(state.bindingTimer);
+    });
+  }
+  live = window.CopilotLive?.create({ request, ready, scope: currentScope,
+    mode: () => state.mode, busy: () => state.previewBusy || state.runBusy || state.loading || state.enabling,
+    revision: () => state.revision, fresh: freshAutomatic, controls: renderControls,
+    reset: invalidate, clearResult, renderResult, validResult, name: () => selected()?.name || '',
+  });
   refresh();
 })();
