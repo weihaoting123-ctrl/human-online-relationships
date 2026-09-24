@@ -1,6 +1,6 @@
 {
   "name": "human-online-relationships-copilot",
-  "version": "1.0.0-rc.5",
+  "version": "1.0.0-rc.6",
   "private": true,
   "description": "Local-first Windows conversation copilot shell",
   "main": "main.cjs",

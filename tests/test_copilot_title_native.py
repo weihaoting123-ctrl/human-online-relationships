@@ -18,6 +18,7 @@ class TitleNativeTests(unittest.TestCase):
         code = r'''
 $ErrorActionPreference='Stop'
 . $source
+Add-Type -Path (Join-Path (Split-Path $source) 'copilot_title_native.cs') -ReferencedAssemblies System.Drawing
 $bitmap = New-Object System.Drawing.Bitmap(600,90)
 $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
 $font = New-Object System.Drawing.Font('Arial',26)
@@ -28,7 +29,6 @@ try {
   if($text -ne 'TEST FRIEND'){throw ('SYNTHETIC_TEXT_MISMATCH: '+($text | ConvertTo-Json -Compress))}
   $graphics.Clear([System.Drawing.Color]::White)
   if((Convert-HeaderBitmap $bitmap) -ne ''){throw 'EMPTY_BITMAP_NOT_REJECTED'}
-  Add-Type -Path (Join-Path (Split-Path $source) 'copilot_title_native.cs') -ReferencedAssemblies System.Drawing
   if(-not [CopilotHeaderNative]::ValidRoi(300,25,250,40)){throw 'VALID_ROI_REJECTED'}
   if([CopilotHeaderNative]::ValidRoi(0,0,2000,1000)){throw 'UNBOUNDED_ROI_ACCEPTED'}
   [Console]::WriteLine('SYNTHETIC_OCR_OK')

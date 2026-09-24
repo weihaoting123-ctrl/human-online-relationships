@@ -36,7 +36,7 @@ function New-SyntheticTarget {
         self.run_ps(r'''
 $t = New-SyntheticTarget
 $p = [CopilotHeaderNative]::CalibrationProbe($t)
-if ($p.X -ne 320 -or $p.Y -ne 16 -or $p.Width -ne 600 -or $p.Height -ne 48) { throw 'PROBE_WRONG' }
+if ($p.X -ne 304 -or $p.Y -ne 36 -or $p.Width -ne 480 -or $p.Height -ne 40) { throw 'PROBE_WRONG' }
 foreach ($width in @(699,2001)) {
     $rect=$t.Bounds; $rect.Right = $rect.Left + $width; $t.Bounds=$rect
     $failed = $false
@@ -44,9 +44,39 @@ foreach ($width in @(699,2001)) {
     if (-not $failed) { throw 'UNSUPPORTED_LAYOUT_ACCEPTED' }
 }
 $rect=$t.Bounds; $rect.Right = $rect.Left + 2000; $t.Bounds=$rect
-if ([CopilotHeaderNative]::CalibrationProbe($t).Width -ne 1200) { throw 'PROBE_UNBOUNDED' }
+if ([CopilotHeaderNative]::CalibrationProbe($t).Width -ne 480) { throw 'PROBE_UNBOUNDED' }
 $t.Dpi = 192
-if ([CopilotHeaderNative]::CalibrationProbe($t).Width -ne 600) { throw 'DPI_NOT_APPLIED' }
+if ([CopilotHeaderNative]::CalibrationProbe($t).Width -ne 480) { throw 'DPI_NOT_APPLIED' }
+foreach ($dpi in @(96,120,144,192,288)) {
+    $t.Dpi=$dpi; $scale=$dpi/96.0
+    $rect=$t.Bounds; $rect.Right=$rect.Left + 700*$scale; $rect.Bottom=$rect.Top + 700*$scale; $t.Bounds=$rect
+    $p=[CopilotHeaderNative]::CalibrationProbe($t)
+    if ($p.Width -ne 236 -or $p.Right -gt 540 -or $p.Bottom -gt 76) { throw 'TOOLBAR_OR_BODY_INCLUDED' }
+}
+''')
+
+    def test_probe_contains_synthetic_chat_header_below_window_chrome(self):
+        self.run_ps(r'''
+$t=New-SyntheticTarget
+$p=[CopilotHeaderNative]::CalibrationProbe($t)
+# A synthetic outer-window header has chrome at y=0..31, title ink at
+# x=315..398/y=48..62, and a body beginning at y=79. No live window is read.
+$header=New-Object System.Drawing.Bitmap(1000,80)
+$graphics=[System.Drawing.Graphics]::FromImage($header)
+$patch=$null
+try {
+    $graphics.Clear([System.Drawing.Color]::White)
+    $graphics.FillRectangle([System.Drawing.Brushes]::LightGray,0,0,1000,31)
+    $graphics.FillRectangle([System.Drawing.Brushes]::Black,315,48,84,14)
+    $graphics.FillRectangle([System.Drawing.Brushes]::Black,0,79,1000,1)
+    $crop=New-Object System.Drawing.Rectangle([int]$p.X,[int]$p.Y,[int]$p.Width,[int]$p.Height)
+    $patch=$header.Clone($crop,[System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
+    $bounds=New-Object System.Drawing.RectangleF((315-$p.X),(48-$p.Y),84,14)
+    $region=[CopilotHeaderNative]::CalibrationRegion($t,$bounds)
+    if ($region.X -gt 309 -or $region.Y -gt 44 -or $region.Bottom -lt 66) { throw 'TITLE_NOT_PADDED' }
+    if ($region.Y -lt 31 -or $region.Bottom -ge 79) { throw 'CHROME_OR_BODY_INCLUDED' }
+    if (-not [CopilotHeaderNative]::BlankCalibrationPadding($patch,$bounds,96)) { throw 'SYNTHETIC_HEADER_REJECTED' }
+} finally { if ($null -ne $patch) { $patch.Dispose() }; $graphics.Dispose(); $header.Dispose() }
 ''')
 
     def test_region_leaves_space_for_later_longer_names_and_stays_in_probe(self):
@@ -54,11 +84,12 @@ if ([CopilotHeaderNative]::CalibrationProbe($t).Width -ne 600) { throw 'DPI_NOT_
 $t = New-SyntheticTarget
 $b = New-Object System.Drawing.RectangleF(20,10,100,22)
 $r = [CopilotHeaderNative]::CalibrationRegion($t,$b)
-if ($r.X -ne 334 -or $r.Y -ne 16 -or $r.Width -ne 480 -or $r.Height -ne 48) { throw 'REGION_TOO_TIGHT' }
+if ($r.X -ne 318 -or $r.Y -ne 36 -or $r.Width -ne 458 -or $r.Height -ne 40) { throw 'REGION_TOO_TIGHT' }
 if (-not [CopilotHeaderNative]::ValidRoi($r.X,$r.Y,$r.Width,$r.Height)) { throw 'REGION_INVALID' }
 foreach ($box in @(
     (New-Object System.Drawing.RectangleF(1,10,100,22)),
     (New-Object System.Drawing.RectangleF(20,1,100,22)),
+    (New-Object System.Drawing.RectangleF(20,24,100,14)),
     (New-Object System.Drawing.RectangleF(20,10,475,22)),
     (New-Object System.Drawing.RectangleF(400,10,100,22)))) {
     $failed = $false
@@ -111,7 +142,7 @@ if ($script:reads -ne 2 -or $response.state -cne 'calibrated') { throw 'TWO_INDE
 $json = $response | ConvertTo-Json -Compress
 if ($json -match 'SYNTHETIC ONLY|rawText|bounds|title|bitmap|image|path') { throw 'CALIBRATION_CONTENT_LEAK' }
 if (($response.Keys | Sort-Object) -join ',' -cne 'region,source,state,target') { throw 'RESPONSE_KEYS' }
-if ($response.region.width -ne 480 -or $response.region.x -ne 334) { throw 'REGION_MISSING' }
+if ($response.region.width -ne 458 -or $response.region.x -ne 318) { throw 'REGION_MISSING' }
 ''')
 
     def test_double_probe_rejects_every_changed_observation_component(self):
@@ -150,21 +181,21 @@ foreach ($change in @('text','rawText','bounds','region','target','finalTarget')
 
     def test_synthetic_ocr_bounds_and_blank_multiline_or_clipped_rejection(self):
         self.run_ps(r'''
-$bitmap=New-Object System.Drawing.Bitmap(600,48)
+$bitmap=New-Object System.Drawing.Bitmap(480,40)
 $graphics=[System.Drawing.Graphics]::FromImage($bitmap)
 $font=New-Object System.Drawing.Font('Arial',14)
 try {
     $graphics.Clear([System.Drawing.Color]::White)
-    $graphics.DrawString('TEST FRIEND',$font,[System.Drawing.Brushes]::Black,20,10)
+    $graphics.DrawString('TEST FRIEND',$font,[System.Drawing.Brushes]::Black,20,6)
     $line=Read-HeaderBitmap $bitmap
     if ($null -eq $line -or $line.text -cne 'TEST FRIEND' -or $line.bounds.Width -le 20) { throw 'OCR_BOUNDS_MISSING' }
     $region=[CopilotHeaderNative]::CalibrationRegion((New-SyntheticTarget),$line.bounds)
-    if ($region.Width -ne 480) { throw 'CALIBRATION_FROM_BITMAP_FAILED' }
+    if ($region.Width -lt 350 -or $region.Right -gt 776 -or $region.Height -ne 40) { throw 'CALIBRATION_FROM_BITMAP_FAILED' }
     if (-not [CopilotHeaderNative]::BlankCalibrationPadding($bitmap,$line.bounds,96)) { throw 'OCR_PADDING_NOT_BLANK' }
     $graphics.Clear([System.Drawing.Color]::White)
     if ($null -ne (Read-HeaderBitmap $bitmap)) { throw 'EMPTY_ACCEPTED' }
     $graphics.DrawString('LINE ONE',$font,[System.Drawing.Brushes]::Black,20,0)
-    $graphics.DrawString('LINE TWO',$font,[System.Drawing.Brushes]::Black,20,24)
+    $graphics.DrawString('LINE TWO',$font,[System.Drawing.Brushes]::Black,20,18)
     if ($null -ne (Read-HeaderBitmap $bitmap)) { throw 'MULTILINE_ACCEPTED' }
     $graphics.Clear([System.Drawing.Color]::White)
     $graphics.DrawString('TEST FRIEND...',$font,[System.Drawing.Brushes]::Black,20,10)
@@ -185,6 +216,78 @@ try {
     $bitmap.SetPixel(124,20,[System.Drawing.Color]::Black)
     if ([CopilotHeaderNative]::BlankCalibrationPadding($bitmap,$bounds,96)) { throw 'NONBLANK_PADDING_ACCEPTED' }
 } finally { $graphics.Dispose();$bitmap.Dispose() }
+''')
+
+    def test_padding_allows_one_dip_glyph_fringe_but_keeps_exterior_guards(self):
+        self.run_ps(r'''
+foreach ($dpi in @(96,120,144,192,288)) {
+    $scale=$dpi/96.0
+    $bitmap=New-Object System.Drawing.Bitmap([int](480*$scale),[int](40*$scale))
+    $graphics=[System.Drawing.Graphics]::FromImage($bitmap)
+    $bounds=New-Object System.Drawing.RectangleF((20*$scale),(10*$scale),(100*$scale),(18*$scale))
+    try {
+        $graphics.Clear([System.Drawing.Color]::White)
+        $graphics.FillRectangle([System.Drawing.Brushes]::Black,$bounds)
+        # Windows OCR can omit a one-DIP horizontal antialias fringe.
+        $leftFringe=[int][Math]::Floor($bounds.Left-$scale)
+        $rightFringe=[int][Math]::Ceiling($bounds.Right+$scale)-1
+        $bitmap.SetPixel($leftFringe,[int](20*$scale),[System.Drawing.Color]::FromArgb(224,224,224))
+        $bitmap.SetPixel($rightFringe,[int](20*$scale),[System.Drawing.Color]::FromArgb(224,224,224))
+        if (-not [CopilotHeaderNative]::BlankCalibrationPadding($bitmap,$bounds,$dpi)) { throw 'GLYPH_FRINGE_REJECTED' }
+        foreach ($point in @(
+            @([int](124*$scale),[int](20*$scale)),
+            @([int](16*$scale),[int](20*$scale)),
+            @([int](20*$scale),[int](3*$scale)),
+            @([int](20*$scale),[int](37*$scale)))) {
+            $bitmap.SetPixel($point[0],$point[1],[System.Drawing.Color]::Black)
+            if ([CopilotHeaderNative]::BlankCalibrationPadding($bitmap,$bounds,$dpi)) { throw 'EXTERIOR_INK_ACCEPTED' }
+            $bitmap.SetPixel($point[0],$point[1],[System.Drawing.Color]::White)
+        }
+    } finally { $graphics.Dispose(); $bitmap.Dispose() }
+}
+''')
+
+    def test_padding_rejects_chrome_boundary_and_clipped_glyph(self):
+        self.run_ps(r'''
+$bitmap=New-Object System.Drawing.Bitmap(480,40)
+$graphics=[System.Drawing.Graphics]::FromImage($bitmap)
+$bounds=New-Object System.Drawing.RectangleF(20,12,100,18)
+try {
+    $graphics.Clear([System.Drawing.Color]::White)
+    $graphics.FillRectangle([System.Drawing.Brushes]::Black,$bounds)
+    $graphics.FillRectangle([System.Drawing.Brushes]::LightGray,0,0,480,8)
+    if ([CopilotHeaderNative]::BlankCalibrationPadding($bitmap,$bounds,96)) { throw 'CHROME_BACKGROUND_ACCEPTED' }
+    $graphics.Clear([System.Drawing.Color]::White)
+    $graphics.FillRectangle([System.Drawing.Brushes]::Black,20,0,100,18)
+    if ([CopilotHeaderNative]::BlankCalibrationPadding($bitmap,(New-Object System.Drawing.RectangleF(20,0,100,18)),96)) { throw 'TOP_CLIPPING_ACCEPTED' }
+    $graphics.Clear([System.Drawing.Color]::White)
+    $graphics.FillRectangle([System.Drawing.Brushes]::Black,20,25,100,15)
+    if ([CopilotHeaderNative]::BlankCalibrationPadding($bitmap,(New-Object System.Drawing.RectangleF(20,25,100,15)),96)) { throw 'BOTTOM_CLIPPING_ACCEPTED' }
+} finally { $graphics.Dispose(); $bitmap.Dispose() }
+''')
+
+    def test_padding_rejects_unrecognized_suffix_anywhere_in_bounded_header(self):
+        self.run_ps(r'''
+foreach ($dpi in @(96,192)) {
+    $scale=$dpi/96.0
+    $bitmap=New-Object System.Drawing.Bitmap([int](480*$scale),[int](40*$scale))
+    $graphics=[System.Drawing.Graphics]::FromImage($bitmap)
+    $bounds=New-Object System.Drawing.RectangleF((20*$scale),(10*$scale),(100*$scale),(18*$scale))
+    try {
+        foreach ($extraX in @(2,124,200,440)) {
+            $graphics.Clear([System.Drawing.Color]::White)
+            $graphics.FillRectangle([System.Drawing.Brushes]::Black,$bounds)
+            $graphics.FillRectangle([System.Drawing.Brushes]::Black,[int]($extraX*$scale),[int](24*$scale),[int](2*$scale),[int](2*$scale))
+            if ([CopilotHeaderNative]::BlankCalibrationPadding($bitmap,$bounds,$dpi)) { throw 'DISTANT_UNRECOGNIZED_INK_ACCEPTED' }
+        }
+        $graphics.Clear([System.Drawing.Color]::White)
+        $graphics.FillRectangle([System.Drawing.Brushes]::Black,$bounds)
+        foreach ($dotX in @(440,446,452)) {
+            $graphics.FillRectangle([System.Drawing.Brushes]::Black,[int]($dotX*$scale),[int](24*$scale),[int](2*$scale),[int](2*$scale))
+        }
+        if ([CopilotHeaderNative]::BlankCalibrationPadding($bitmap,$bounds,$dpi)) { throw 'DISTANT_ELLIPSIS_ACCEPTED' }
+    } finally { $graphics.Dispose(); $bitmap.Dispose() }
+}
 ''')
 
     def test_protocol_failure_uses_only_fixed_safe_codes(self):

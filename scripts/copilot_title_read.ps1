@@ -14,7 +14,7 @@ function Wait-HeaderOperation($Operation, [Type]$ResultType) {
     return $task.Result
 }
 
-function Read-HeaderBitmap([System.Drawing.Bitmap]$Bitmap) {
+function Read-HeaderBitmap([System.Drawing.Bitmap]$Bitmap, [uint32]$Dpi = 96) {
     try {
         Add-Type -AssemblyName System.Runtime.WindowsRuntime
         [Windows.Media.Ocr.OcrEngine, Windows.Foundation, ContentType=WindowsRuntime] | Out-Null
@@ -26,9 +26,27 @@ function Read-HeaderBitmap([System.Drawing.Bitmap]$Bitmap) {
         if ($null -eq $engine) { throw 'missing' }
     } catch { throw 'TITLE_OCR_NOT_INSTALLED' }
     $stream = New-Object System.IO.MemoryStream
-    $random = $null; $software = $null
+    $random = $null; $software = $null; $enlarged = $null
     try {
-        $Bitmap.Save($stream,[System.Drawing.Imaging.ImageFormat]::Png)
+        # Small CJK titles can produce no OCR lines at normal desktop DPI.
+        # Enlarge only these already bounded header pixels in memory, never the
+        # capture area. High-DPI text is already large enough. Return original
+        # pixel coordinates so clipping/padding checks still inspect the source.
+        $zoom = 1
+        if ($Bitmap.Height -lt 80 -and
+            2 * [Math]::Max($Bitmap.Width,$Bitmap.Height) -le [Windows.Media.Ocr.OcrEngine]::MaxImageDimension) { $zoom = 2 }
+        $ocrBitmap = $Bitmap
+        if ($zoom -gt 1) {
+            $enlarged = [System.Drawing.Bitmap]::new($Bitmap.Width*$zoom,$Bitmap.Height*$zoom)
+            $graphics = [System.Drawing.Graphics]::FromImage($enlarged)
+            try {
+                $graphics.Clear([System.Drawing.Color]::White)
+                $graphics.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+                $graphics.DrawImage($Bitmap,0,0,$enlarged.Width,$enlarged.Height)
+            } finally { $graphics.Dispose() }
+            $ocrBitmap = $enlarged
+        }
+        $ocrBitmap.Save($stream,[System.Drawing.Imaging.ImageFormat]::Png)
         $stream.Position = 0
         $random = [System.IO.WindowsRuntimeStreamExtensions]::AsRandomAccessStream($stream)
         $decoder = Wait-HeaderOperation ([Windows.Graphics.Imaging.BitmapDecoder]::CreateAsync($random)) ([Windows.Graphics.Imaging.BitmapDecoder])
@@ -42,9 +60,11 @@ function Read-HeaderBitmap([System.Drawing.Bitmap]$Bitmap) {
         $right = 0.0; $bottom = 0.0
         foreach ($word in $words) {
             $rect = $word.BoundingRect
-            if ($rect.X -lt 2 -or $rect.Y -lt 2 -or $rect.X+$rect.Width -gt $Bitmap.Width-2 -or $rect.Y+$rect.Height -gt $Bitmap.Height-2) { return $null }
-            $left = [Math]::Min($left,$rect.X); $top = [Math]::Min($top,$rect.Y)
-            $right = [Math]::Max($right,$rect.X+$rect.Width); $bottom = [Math]::Max($bottom,$rect.Y+$rect.Height)
+            $wordLeft=$rect.X/$zoom; $wordTop=$rect.Y/$zoom
+            $wordRight=($rect.X+$rect.Width)/$zoom; $wordBottom=($rect.Y+$rect.Height)/$zoom
+            if ($wordLeft -lt 2 -or $wordTop -lt 2 -or $wordRight -gt $Bitmap.Width-2 -or $wordBottom -gt $Bitmap.Height-2) { return $null }
+            $left = [Math]::Min($left,$wordLeft); $top = [Math]::Min($top,$wordTop)
+            $right = [Math]::Max($right,$wordRight); $bottom = [Math]::Max($bottom,$wordBottom)
         }
         $rawText = $lines[0].Text
         $text = $rawText.Trim().Normalize([Text.NormalizationForm]::FormC)
@@ -55,16 +75,21 @@ function Read-HeaderBitmap([System.Drawing.Bitmap]$Bitmap) {
         if ([string]::IsNullOrWhiteSpace($text) -or $text.Length -gt 200 -or
             $rawText -match '[\x00-\x1f\x7f\u202a-\u202e\u2066-\u2069\u2026\u22ef]|\.{3}' -or
             $text -match '[.\uFF0E\u3002]\s*$') { return $null }
-        return @{text=$text;rawText=$rawText;bounds=(New-Object System.Drawing.RectangleF($left,$top,($right-$left),($bottom-$top)))}
+        $bounds = [System.Drawing.RectangleF]::new($left,$top,($right-$left),($bottom-$top))
+        # OCR can omit visible suffix ink (including ellipses). Reject it on the
+        # original header, for ongoing reads as well as initial calibration.
+        if (-not [CopilotHeaderNative]::BlankCalibrationPadding($Bitmap,$bounds,$Dpi)) { return $null }
+        return @{text=$text;rawText=$rawText;bounds=$bounds}
     } finally {
         if ($null -ne $software) { $software.Dispose() }
         if ($null -ne $random) { $random.Dispose() }
         $stream.Dispose()
+        if ($null -ne $enlarged) { $enlarged.Dispose() }
     }
 }
 
-function Convert-HeaderBitmap([System.Drawing.Bitmap]$Bitmap) {
-    $line = Read-HeaderBitmap $Bitmap
+function Convert-HeaderBitmap([System.Drawing.Bitmap]$Bitmap, [uint32]$Dpi = 96) {
+    $line = Read-HeaderBitmap $Bitmap $Dpi
     if ($null -eq $line) { return '' }
     return $line.text
 }
@@ -93,7 +118,7 @@ function Read-CalibrationSample([int]$AssistantPid) {
     $bitmap = $null
     try {
         $bitmap = [CopilotHeaderNative]::CaptureProbe($target)
-        $line = Read-HeaderBitmap $bitmap
+        $line = Read-HeaderBitmap $bitmap $target.Dpi
         if ($null -eq $line) { throw 'TITLE_AUTO_CALIBRATION_UNREADABLE' }
         $region = [CopilotHeaderNative]::CalibrationRegion($target,$line.bounds)
         if (-not [CopilotHeaderNative]::BlankCalibrationPadding($bitmap,$line.bounds,$target.Dpi)) { throw 'TITLE_AUTO_CALIBRATION_UNREADABLE' }
@@ -125,7 +150,7 @@ function Invoke-HeaderRequest([string]$Line,[int]$AssistantPid) {
         $target = Get-HeaderTarget $AssistantPid
         if ($null -eq $target) { throw 'TITLE_WINDOW_UNAVAILABLE' }
         $bitmap = [CopilotHeaderNative]::Capture($target,$request.x,$request.y,$request.width,$request.height)
-        $title = Convert-HeaderBitmap $bitmap
+        $title = Convert-HeaderBitmap $bitmap $target.Dpi
         if ([string]::IsNullOrWhiteSpace($title)) { throw 'TITLE_UNREADABLE' }
         if (-not [CopilotHeaderNative]::SameTarget($target,(Get-HeaderTarget $AssistantPid))) { throw 'TITLE_TARGET_CHANGED' }
         return @{state='observed';title=$title;target=$target.Key;source='local_ocr'}

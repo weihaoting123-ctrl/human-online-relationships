@@ -46,6 +46,8 @@ Windows 微信 4.1.13.x 通过一次性标题区域校准、内存中 OCR、唯�
 
 RC3 增补一次点击的本机自动校准，不必手动标角；受支持标准布局的固定顶部条带两轮一致才保存。失败可保留手动标记，不扩张截图范围。见[有界计划](docs/plans/2026-09-24-title-auto-calibration.md)。
 
+RC6 修复标准外窗坐标与小字号中文 OCR 的校准失败，复用 #46 / PR #47，不新增重复需求；保留原图空白边缘、双样本与身份核对。见[修复边界与验收](docs/plans/2026-09-24-title-calibration-rc6.md)。完整实机链路与其他布局仍待验收。
+
 ## A：先修好首次使用闭环（v0.1.1，已发布）
 
 [设计规范](docs/superpowers/specs/2026-09-06-v011-first-use-design.md) · [测试与发布计划](docs/superpowers/plans/2026-09-06-v011-first-use.md) · [审查记录](docs/reviews/v0.1.1-review.md) · [迭代里程碑](https://github.com/weihaoting123-ctrl/human-online-relationships/milestone/3)

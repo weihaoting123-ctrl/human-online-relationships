@@ -40,9 +40,10 @@ public static class CopilotHeaderNative {
         double width=(target.Bounds.Right-target.Bounds.Left)/(target.Dpi/96.0);
         double height=(target.Bounds.Bottom-target.Bounds.Top)/(target.Dpi/96.0);
         if(width<700||width>2000||height<320)throw new ArgumentException("TITLE_AUTO_CALIBRATION_LAYOUT_UNSUPPORTED");
-        // This profile is restricted to the already-checked 4.1.13 layout. Never
-        // extend downward or fall back to the message body when OCR is absent.
-        return new RectangleF(320,16,(float)Math.Min(width-400,1200),48);
+        // Outer-window DIP coordinates for the checked 4.1.13 standard layout:
+        // below its top chrome, inside the chat header, and left of its toolbar.
+        // Never extend downward or fall back to the message body when OCR is absent.
+        return new RectangleF(304,36,(float)Math.Min(width-304-160,480),40);
     }
     public static RectangleF CalibrationRegion(Target target,RectangleF textBounds) {
         var probe=CalibrationProbe(target);double scale=target.Dpi/96.0;
@@ -72,10 +73,13 @@ public static class CopilotHeaderNative {
         int right=(int)Math.Ceiling(textBounds.Right+8*scale),bottom=bitmap.Height;
         if(left<0||top<0||right>bitmap.Width||bottom>bitmap.Height)return false;
         Color background=bitmap.GetPixel(left,top);
-        for(int y=top;y<bottom;y++)for(int x=left;x<right;x++){
-            // WinRT's vertical glyph bounds are approximate. Verify the actual
-            // saved fixed-height strip's top/bottom, not a tight OCR-box crop.
-            if(x>=Math.Floor(textBounds.Left)&&x<Math.Ceiling(textBounds.Right)&&
+        for(int y=top;y<bottom;y++)for(int x=0;x<bitmap.Width;x++){
+            // WinRT's glyph bounds may omit a one-DIP horizontal antialias
+            // fringe. Retain at least four DIP of blank exterior on each side,
+            // and verify the saved strip's full four-DIP top/bottom edge bands.
+            // Check the whole bounded header exterior: OCR can omit a distant
+            // suffix or ellipsis, not just ink beside its reported glyph box.
+            if(x>=Math.Floor(textBounds.Left-scale)&&x<Math.Ceiling(textBounds.Right+scale)&&
                y>=Math.Ceiling(4*scale)&&y<bitmap.Height-Math.Ceiling(4*scale))continue;
             Color pixel=bitmap.GetPixel(x,y);
             if(Math.Abs(pixel.R-background.R)>24||Math.Abs(pixel.G-background.G)>24||Math.Abs(pixel.B-background.B)>24)return false;
