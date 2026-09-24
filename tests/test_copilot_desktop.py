@@ -11,7 +11,7 @@ import unittest
 from concurrent.futures import ThreadPoolExecutor
 from email.message import Message
 from http.client import HTTPConnection
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from types import SimpleNamespace
 from unittest import mock
 
@@ -70,7 +70,8 @@ class DesktopServiceTests(DesktopFixture):
         self.spawn.assert_not_called()
         self.assertEqual(before, set(self.root.rglob('*')))
         args, options = self.probe.call_args
-        self.assertTrue(Path(args[0][0]).is_absolute())
+        # This fixture simulates Windows even when the test host is Linux.
+        self.assertTrue(PureWindowsPath(args[0][0]).is_absolute())
         self.assertIn('-NoProfile', args[0])
         self.assertIn('-NonInteractive', args[0])
         self.assertIn(str(self.exe), args[0])
