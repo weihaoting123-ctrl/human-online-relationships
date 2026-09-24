@@ -30,11 +30,13 @@ class LibraryService:
             bundles.append({**item['source'], 'library': metadata})
         return sorted(bundles, key=lambda item: item.get('updated_at') or '', reverse=True)
 
-    def require_visible(self, bundle_id):
+    def require_visible(self, bundle_id, *, refresh=True):
         # This check also rejects stale previews for newly hidden conversations.
         if not isinstance(bundle_id, str):
             raise LibraryValidationError('会话标识无效')
-        items = self.snapshot()['conversations']
+        # Scoped consumers can use the already indexed metadata and validate
+        # only their chosen source, avoiding a scan of unrelated chat files.
+        items = (self.snapshot() if refresh else self.repository.snapshot())['conversations']
         item = next((value for value in items if value['bundle_id'] == bundle_id), None)
         if item is None or item.get('source_missing'):
             raise LibraryNotFoundError('会话来源暂不可用')

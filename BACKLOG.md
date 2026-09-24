@@ -16,6 +16,14 @@
 - 每次交付更新“实际版本 / PR / 测试证据”，不能把候选版本当作完成记录。
 - 按 [项目托管规范](docs/project-stewardship.md)，后续常规范围确认由受托代理逐批判断并记录，不再重复要求维护者选择技术方案；仍保留数据授权、实机验收与发布门槛。
 
+## 用户指定独立迭代：COPILOT-01 / 1.0.0-rc.1
+
+无感桌面对话副驾，P2，待验收。[主 Issue #44](https://github.com/weihaoting123-ctrl/human-online-relationships/issues/44) · [设计](docs/superpowers/specs/2026-09-24-copilot-v1-design.md) · [使用与非目标](docs/copilot.md)。
+
+本轮实现 Windows 窗口伴随、磁吸/悬浮、有限单会话归档上下文和手工补充、显式单次回复建议与复制。默认关闭，不自动外发、不读当前聊天、不替用户发送；模型语义仍需用户判断。原生合成窗口、真实桌面壳合成流程、浏览器/后端与独立审查构成本机证据；当前 CI、依赖基线、微信版本/混合 DPI 实机矩阵另行验收，不提前标记正式 1.0。
+
+实时当前联系人/消息捕获、最新同城活动来源、macOS/Linux 原生伴随和开机自启保留为后续候选，不用历史归档或模拟活动冒充已实现。
+
 ## A：先修好首次使用闭环（v0.1.1，已发布）
 
 [设计规范](docs/superpowers/specs/2026-09-06-v011-first-use-design.md) · [测试与发布计划](docs/superpowers/plans/2026-09-06-v011-first-use.md) · [审查记录](docs/reviews/v0.1.1-review.md) · [迭代里程碑](https://github.com/weihaoting123-ctrl/human-online-relationships/milestone/3)
@@ -57,6 +65,8 @@
 范围：会话日轨迹、小时及双边横条，分析报告的聚合图；鼠标最近点、触摸、键盘、完整日期、真实零值、浮层边界及销毁。复用原生 SVG/HTML 和主题，不引入图表库。只读页面聚合，不增加聊天读取或 AI 请求。现有热力格和周时间条不在本轮改动范围；不将 B 批工作台、辅助技术人工验收或其他平台适配标为完成。候选基于 v0.1.4；私人部署仅补对应静态交互，不整体迁移其他版本。
 
 回归中另发现备份状态误报竞态，独立记录 [#30](https://github.com/weihaoting123-ctrl/human-online-relationships/issues/30)，不混入 UI 补丁，也不因图表验收而关闭。
+
+1.0.0-rc.1 整仓回归稳定复现后，补充锁内终态重读及同进程状态 I/O 协调；事件屏障与重复合成 HTTP 测试通过。#30 仍开放：Windows 独立 CLI/流水线与控制台之间的读句柄/原子替换冲突尚未覆盖，不把本轮局部修复宣称为所有运行方式已解决。
 
 | ID | 需求 / 优先级 | 完成条件 | 依赖 / 已有 Issue |
 | --- | --- | --- | --- |

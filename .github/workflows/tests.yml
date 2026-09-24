@@ -35,7 +35,6 @@ jobs:
         os: [ubuntu-24.04, windows-2025]
     env:
       SHE_LOVE_ME_UI_TESTS: '1'
-      SHE_LOVE_ME_UI_SCREENSHOTS: '0'
     steps:
       - name: Check out public source
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -91,6 +90,9 @@ jobs:
       - name: Run the standalone catalog tests
         run: node --test tests/test_catalog.cjs
 
+      - name: Run desktop geometry, lifecycle and IPC boundary tests
+        run: node --test desktop/copilot/tests/*.test.cjs
+
       # Browser fixtures may create temporary synthetic files. Never upload them,
       # screenshots, traces, logs, data/, reports/, backups/, or a virtualenv.
       # setup-python caches only public pip downloads, not workspace contents.
@@ -123,3 +125,12 @@ jobs:
         # PyPI receives public package names/versions only. No --fix, source
         # upload, API key, external scanner action, or artifact publishing.
         run: python -m pip_audit --requirement requirements-dev.txt --progress-spinner off
+
+      - name: Set up Node for the optional desktop dependency audit
+        uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
+        with:
+          node-version: '22'
+          package-manager-cache: false
+
+      - name: Audit the locked public desktop dependencies without installing runtime
+        run: npm --prefix desktop/copilot audit --package-lock-only

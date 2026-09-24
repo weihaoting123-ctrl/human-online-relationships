@@ -394,7 +394,11 @@ def _cloud_merge(config, key, scope, packets):
 
 
 def _request_result(config, key, content, system):
-    context = content
+    return _safe_result(_request_json(config, key, content, system), context=content)
+
+
+def _request_json(config, key, content, system):
+    """Single bounded provider request; callers validate their own JSON schema."""
     body = {"model": config["model"], "messages": [
         {"role": "system", "content": system},
         {"role": "user", "content": json.dumps(content, ensure_ascii=False)},
@@ -435,7 +439,7 @@ def _request_result(config, key, content, system):
             value = json.loads(content)
         except ValueError:
             raise OutputValidationError("OUTPUT_JSON", "report") from None
-        return _safe_result(value, context=context)
+        return value
     except AnalysisError:
         raise
     except urllib.error.HTTPError as exc:

@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>回复助手 · 人类线上关系可视化</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/copilot/copilot.css">
+  <script src="/copilot/copilot.js" defer></script>
+</head>
+<body data-size="expanded">
+  <button id="bubble-open" class="bubble" type="button" aria-label="展开回复助手" hidden><span class="bubble-mark" aria-hidden="true">↗</span><span>回复助手</span><span class="bubble-action">展开</span></button>
+  <main class="assistant" aria-label="回复助手">
+    <header class="topbar">
+      <div class="heading"><span class="mark" aria-hidden="true">↗</span><h1>回复助手</h1></div>
+      <div id="native-actions" class="window-actions" hidden>
+        <button id="compact-window" class="icon-button" type="button" aria-label="收起为紧凑窗口" title="收起">−</button>
+        <button id="bubble-window" class="icon-button" type="button" aria-label="收起为气泡" title="气泡">·</button>
+        <button id="close-window" class="icon-button" type="button" aria-label="关闭回复助手" title="关闭">×</button>
+      </div>
+    </header>
+    <p id="native-status" class="native-status" role="status">浏览器模式 · 不跟随窗口</p>
+    <div class="compact-content" hidden>
+      <div class="compact-toolbar"><span id="compact-context">选择一份归档，准备回复</span><button id="expand-window" type="button" class="quiet-button">展开</button></div>
+      <article id="compact-suggestion" class="compact-suggestion" hidden>
+        <div class="compact-toolbar"><span class="style-label">自然一点</span><button id="compact-copy" class="copy-button" type="button">复制</button></div>
+        <p id="compact-reply"></p>
+        <p class="compact-note">展开可查看全部建议。复制后由你决定是否发送。</p>
+      </article>
+    </div>
+    <div class="full-content">
+      <div id="native-controls" class="native-controls" hidden>
+        <label class="sr-only" for="window-mode">窗口位置</label>
+        <select id="window-mode"><option value="dock">贴边跟随</option><option value="float">自由悬浮</option></select>
+        <button id="pause-follow" class="quiet-button" type="button" aria-pressed="false">暂停跟随</button>
+      </div>
+      <p class="capability-note">联系人与实时消息识别未接入。请手动选择会话；建议依据本机归档和你补充的文字。</p>
+
+      <section class="context-card" aria-labelledby="context-heading">
+        <div class="context-heading"><span class="eyebrow">本次会话</span><button id="choose-context" class="text-button" type="button">选择 / 修改</button></div>
+        <h2 id="context-heading">尚未选择会话</h2>
+        <p id="archive-freshness" class="muted">归档不是实时聊天，日期以已有记录为准。</p>
+        <details id="context-settings">
+          <summary>会话与发送范围</summary>
+          <div class="context-fields">
+            <label for="contact-select">选择归档会话</label>
+            <select id="contact-select"><option value="">请选择一个会话</option></select>
+            <div class="date-fields">
+              <div><label for="date-from">开始日期</label><input id="date-from" type="date" required disabled></div>
+              <div><label for="date-to">结束日期</label><input id="date-to" type="date" required disabled></div>
+            </div>
+            <div class="option-fields">
+              <div><label for="max-messages">最多取用条数</label><input id="max-messages" type="number" min="1" max="200" step="1" value="80" required></div>
+              <div><label for="direction">这次希望</label><select id="direction"><option value="relaxed">轻松聊聊</option><option value="closer">拉近一点</option><option value="invite">自然邀约</option></select></div>
+            </div>
+            <label for="latest-draft">补充最新一句 <span class="optional">可选</span></label>
+            <textarea id="latest-draft" maxlength="4000" rows="3" placeholder="手动粘贴对方最新的话，或写下你的想法。" aria-describedby="draft-note"></textarea>
+            <p id="draft-note" class="field-note">只在当前窗口内保留。确认后会随所选归档文字一起发送；不会自动读取剪贴板。</p>
+          </div>
+        </details>
+      </section>
+
+      <section class="readiness" aria-label="功能状态">
+        <p id="module-status">正在读取本机设置…</p>
+        <div class="readiness-actions"><button id="enable-copilot" class="quiet-button" type="button" hidden>启用回复助手</button><button id="refresh-status" class="text-button" type="button">刷新状态</button></div>
+      </section>
+      <button id="prepare-preview" class="primary-button" type="button" disabled>核对本次发送范围</button>
+      <p id="feedback" class="feedback" role="status" aria-live="polite"></p>
+
+      <section id="consent-panel" class="consent-card" aria-labelledby="consent-heading" hidden>
+        <h2 id="consent-heading">确认这一次生成</h2>
+        <dl id="preview-facts"></dl>
+        <p>仅发送所选范围内的脱敏文字与补充内容，不含图片、音频。自动脱敏无法保证自由文本完全匿名。</p>
+        <p class="cost-note">最多调用 1 次，可能产生服务商费用。失败不会自动重试；再次调用可能重复计费。</p>
+        <div class="consent-actions"><button id="confirm-run" class="primary-button" type="button" disabled>确认发送并生成一次</button><button id="cancel-preview" class="text-button" type="button">取消</button></div>
+      </section>
+
+      <div class="tabs" role="tablist" aria-label="建议类型">
+        <button id="tab-replies" role="tab" aria-selected="true" aria-controls="panel-replies" tabindex="0" type="button">回复</button>
+        <button id="tab-topics" role="tab" aria-selected="false" aria-controls="panel-topics" tabindex="-1" type="button">话题</button>
+        <button id="tab-city" role="tab" aria-selected="false" aria-controls="panel-city" tabindex="-1" type="button">同城</button>
+      </div>
+      <section id="panel-replies" role="tabpanel" aria-labelledby="tab-replies" tabindex="0">
+        <div id="replies-empty" class="empty-state"><span class="empty-symbol" aria-hidden="true">“</span><h2>把话说得像你自己</h2><p>选好会话，核对范围，再决定是否生成。这里会给出三种说法，供你取舍。</p></div>
+        <div id="replies-list" class="suggestion-list"></div>
+      </section>
+      <section id="panel-topics" role="tabpanel" aria-labelledby="tab-topics" tabindex="0" hidden>
+        <p id="topics-empty" class="empty-state">生成回复后，这里会显示可接着聊的话题。</p><div id="topics-list" class="suggestion-list"></div>
+      </section>
+      <section id="panel-city" role="tabpanel" aria-labelledby="tab-city" tabindex="0" hidden>
+        <div class="empty-state"><h2>同城灵感</h2><p>尚未连接活动来源。这里不会显示未经核实的活动、日期或来源链接。</p><p>你可以在“补充最新一句”中写入城市、兴趣和已核实的公开活动信息，再选择“自然邀约”。</p></div>
+      </section>
+      <ul id="caveats" class="caveats" hidden></ul>
+      <footer>复制后由你决定如何使用。助手不会粘贴到微信，也不会发送消息。</footer>
+    </div>
+  </main>
+</body>
+</html>

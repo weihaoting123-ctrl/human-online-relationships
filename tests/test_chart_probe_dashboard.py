@@ -135,6 +135,10 @@ class DashboardChartProbeTests(unittest.TestCase):
         svg = self.page.locator("#pulse-chart")
         svg.scroll_into_view_if_needed()
         svg.focus()
+        # Focus can finish a scroll in the next animation frame. The product
+        # intentionally dismisses probes on scroll; start keyboard input only
+        # after both scroll and focus have settled, not during that dismissal.
+        self.page.evaluate('() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))')
         self.page.keyboard.press("Home")
         self.expect_probe("2026-08-01", "3 条", "0 条", "3 条")
         self.page.keyboard.press("ArrowRight")

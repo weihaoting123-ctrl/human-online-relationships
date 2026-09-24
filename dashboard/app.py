@@ -153,6 +153,7 @@ from import_store import (exclusive_import_lock, fingerprint_import,
                           validated_private_root)  # noqa: E402
 from dashboard.search import search_messages  # noqa: E402
 from dashboard import analysis as scoped_ai  # noqa: E402
+from dashboard.copilot import service as copilot  # noqa: E402
 from dashboard.chat_heatmap import build_chat_heatmap  # noqa: E402
 from dashboard.library import (LibraryConflictError, LibraryNotFoundError,
                                LibraryValidationError)  # noqa: E402
@@ -500,6 +501,12 @@ def list_bundles():
 def _analysis_admission(bundle_id):
     module_registry().require('analysis')
     library_service().require_visible(bundle_id)
+
+
+def _copilot_admission(bundle_id):
+    module_registry().require('copilot')
+    module_registry().require('analysis')
+    library_service().require_visible(bundle_id, refresh=False)
 
 
 def managed_search(request):
@@ -1112,6 +1119,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     return self._json(library_service().snapshot())
                 if path == "/api/modules":
                     return self._json(module_registry().snapshot())
+                if path == "/api/copilot/status":
+                    enabled = next(item['enabled'] for item in module_registry().snapshot()['modules'] if item['id'] == 'copilot')
+                    return self._json(copilot.status(DATA_DIR, enabled=enabled, conversations=list_bundles()))
                 if path == "/api/state":
                     return self._json({
                         "status": "ok",
@@ -1193,6 +1203,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 return self._json(library_service().update_tag(request))
             if path == "/api/modules":
                 return self._json(module_registry().update(request))
+            if path == "/api/copilot/preview":
+                return self._json(copilot.preview(DATA_DIR, _library_contacts(), request, admission=_copilot_admission))
+            if path == "/api/copilot/run":
+                return self._json(copilot.run(DATA_DIR, _library_contacts(), request, admission=_copilot_admission))
             if path == "/api/ai/config":
                 return self._json(scoped_ai.save_config(DATA_DIR, request))
             if path == "/api/ai/config/clear":
