@@ -19,6 +19,10 @@ contextBridge.exposeInMainWorld('copilotDesktop',Object.freeze({
     if(!navigator.userActivation.isActive)return Promise.reject(new Error('COPILOT_USER_GESTURE_REQUIRED'));
     return invoke('calibrateTitle');
   },
+  autoCalibrateTitle:()=>{
+    if(!navigator.userActivation.isActive)return Promise.reject(new Error('COPILOT_USER_GESTURE_REQUIRED'));
+    return invoke('autoCalibrateTitle');
+  },
   onConversation:callback=>{
     if(typeof callback!=='function')throw new TypeError('A callback is required');
     const listener=(_event,state)=>callback(state);

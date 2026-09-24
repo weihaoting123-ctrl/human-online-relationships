@@ -28,7 +28,23 @@ class TitleReader {
           const line=buffer.slice(0,newline).trim();buffer=buffer.slice(newline+1);
           if(!line)continue;
           if(!this.pending){this.stop('TITLE_PROTOCOL_ERROR');return}
-          try{this.finish(this.observer.accept(JSON.parse(line)))}catch{this.stop('TITLE_PROTOCOL_ERROR');return}
+          try{
+            const frame=JSON.parse(line);
+            if(this.pending.kind==='calibrate'){
+              if(buffer.trim()){this.stop('TITLE_PROTOCOL_ERROR');return}
+              if(frame?.state==='calibrated'&&Object.keys(frame).sort().join(',')==='region,source,state,target'
+                &&frame.source==='local_ocr'&&/^[a-f0-9]{64}$/.test(frame.target)&&validCalibration(frame.region)){
+                this.finish({state:'calibrated',source:'local_ocr',target:frame.target,region:{...frame.region}});
+                // Calibration is a one-shot worker. Ignore all later bytes.
+                this.stop('TITLE_AUTO_CALIBRATING');return;
+              }else if(frame?.state==='unavailable'){
+                const reason=['TITLE_LAYOUT_UNSUPPORTED','TITLE_OCCLUDED','TITLE_WINDOW_UNAVAILABLE','TITLE_AUTO_AMBIGUOUS',
+                  'TITLE_TARGET_CHANGED','TITLE_UNREADABLE','TITLE_OCR_NOT_INSTALLED','TITLE_AUTO_CALIBRATION_UNAVAILABLE',
+                  'TITLE_AUTO_CALIBRATION_UNSTABLE','TITLE_AUTO_CALIBRATION_UNREADABLE','TITLE_AUTO_CALIBRATION_LAYOUT_UNSUPPORTED'].includes(frame.reason)?frame.reason:'TITLE_AUTO_FAILED';
+                this.finish(this.observer.clear(reason));
+              }else this.stop('TITLE_PROTOCOL_ERROR');
+            }else this.finish(this.observer.accept(frame));
+          }catch{this.stop('TITLE_PROTOCOL_ERROR');return}
         }
       });
       const failed=()=>{if(this.child===child){this.retryAfter=Date.now()+5000;this.stop('TITLE_READER_UNAVAILABLE')}};
@@ -37,6 +53,7 @@ class TitleReader {
     }catch{this.retryAfter=Date.now()+5000;this.stop('TITLE_READER_UNAVAILABLE');return false}
   }
   sample(){
+    if(this.pending?.kind==='calibrate')return Promise.resolve(this.observer.snapshot());
     if(!this.region)return Promise.resolve(this.observer.clear('TITLE_CALIBRATION_REQUIRED'));
     if(this.pending)return this.pending.promise;
     if(!this.start())return Promise.resolve(this.observer.clear('TITLE_READER_UNAVAILABLE'));
@@ -47,5 +64,15 @@ class TitleReader {
     return promise;
   }
   async refresh(){if(this.pending)await this.pending.promise;return this.sample()}
+  calibrate(){
+    if(this.pending?.kind==='calibrate')return this.pending.promise;
+    this.stop('TITLE_AUTO_CALIBRATING');
+    if(!this.start())return Promise.resolve(this.observer.clear('TITLE_READER_UNAVAILABLE'));
+    let resolve;const promise=new Promise(done=>{resolve=done});
+    const timer=setTimeout(()=>this.stop('TITLE_AUTO_TIMEOUT'),this.timeout*3);
+    this.pending={kind:'calibrate',promise,resolve,timer};
+    try{this.child.stdin.write('{"operation":"calibrate"}\n')}catch{this.stop('TITLE_READER_UNAVAILABLE')}
+    return promise;
+  }
 }
 module.exports={TitleReader};

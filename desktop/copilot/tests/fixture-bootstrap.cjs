@@ -19,9 +19,13 @@ fs.existsSync=file=>String(file).endsWith('Scripts\\python.exe')||String(file).e
 childProcess.spawn=(_exe,args)=>{
  const child=new EventEmitter();child.stdin=new PassThrough();child.stdout=new PassThrough();child.exitCode=null;
  if(args.some(value=>String(value).endsWith('copilot_title_read.ps1'))){
-  child.stdin.on('data',()=>{
+  child.stdin.on('data',chunk=>{
    globalThis.__fixtureCaptures++;
-   setImmediate(()=>{if(child.exitCode===null)child.stdout.write(JSON.stringify({state:'observed',title:globalThis.__fixtureTitle,target:'synthetic-ocr-window',source:'local_ocr'})+'\n')});
+   const request=JSON.parse(String(chunk));
+   const result=request.operation==='calibrate'
+     ?{state:'calibrated',region:{x:340,y:16,width:100,height:48},target:'a'.repeat(64),source:'local_ocr'}
+     :{state:'observed',title:globalThis.__fixtureTitle,target:'synthetic-ocr-window',source:'local_ocr'};
+   setImmediate(()=>{if(child.exitCode===null)child.stdout.write(JSON.stringify(result)+'\n')});
   });
   child.kill=()=>{child.exitCode=0;child.emit('exit',0)};
   child.stdin.on('finish',()=>child.kill());return child;

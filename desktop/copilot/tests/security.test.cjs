@@ -37,7 +37,7 @@ test('copy limit counts Unicode code points like the backend schema',()=>{
 });
 test('recognition IPC cannot specify a window, path or arbitrary crop',()=>{
  assert.equal(windowCommand('recognition',true).command,'recognition');
- for(const command of ['conversationState','refreshConversation','calibrateTitle']){
+ for(const command of ['conversationState','refreshConversation','calibrateTitle','autoCalibrateTitle']){
    assert.equal(windowCommand(command,undefined).command,command);
    assert.throws(()=>windowCommand(command,{window:123}));
  }

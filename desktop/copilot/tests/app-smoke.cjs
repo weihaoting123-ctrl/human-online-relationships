@@ -9,7 +9,7 @@ const {_electron}=require(path.join(root,'.venv','Lib','site-packages','playwrig
 const runtime=path.join(root,'desktop','copilot','node_modules','electron','dist','electron.exe');
 const fixture=fs.mkdtempSync(path.join(root,'scripts','tmp','copilot-app-'));
 const fixtureApp=path.join(fixture,'desktop','copilot');fs.mkdirSync(fixtureApp,{recursive:true});
-for(const name of ['package.json','main.cjs','preload.cjs','security.cjs','icon.cjs','placement.cjs','window-controller.cjs','title-observer.cjs','title-reader.cjs','title-calibration.cjs'])fs.copyFileSync(path.join(root,'desktop','copilot',name),path.join(fixtureApp,name));
+for(const name of ['package.json','main.cjs','preload.cjs','security.cjs','icon.cjs','placement.cjs','window-controller.cjs','title-observer.cjs','title-reader.cjs','title-calibration.cjs','auto-calibration.cjs'])fs.copyFileSync(path.join(root,'desktop','copilot',name),path.join(fixtureApp,name));
 fs.copyFileSync(path.join(__dirname,'fixture-bootstrap.cjs'),path.join(fixtureApp,'fixture-bootstrap.cjs'));
 let calls=0,enabled=false,preview,bindingTitle='',bindingGeneration=0,bindingToken='',bindingSeq=0;
 const people=[{bundle_id:'synthetic-person',contact_display:'合成青禾',date_from:'2026-09-01',date_to:'2026-09-24',message_count:20},
@@ -44,7 +44,7 @@ const server=http.createServer(async(req,res)=>{
   if(preview.binding_required)assert.equal(request.binding_confirmed,true);
   calls++;return json({status:'ok',binding_revision:request.binding_revision,replies:['natural','warm','invite'].map(style=>({style,text:'合成建议，仅用于测试。',reason:'合成理由'})),topics:[],caveats:[]});
  }
- const allowed={'/copilot/index.html':'text/html','/copilot/copilot.js':'text/javascript','/copilot/copilot.css':'text/css'};
+ const allowed={'/copilot/index.html':'text/html','/copilot/copilot.js':'text/javascript','/copilot/live.js':'text/javascript','/copilot/copilot.css':'text/css'};
  if(!allowed[pathname]){res.writeHead(404);return res.end()}
  res.setHeader('Content-Type',allowed[pathname]);
  res.setHeader('Content-Security-Policy',"default-src 'self'; style-src 'self'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'");
@@ -79,6 +79,10 @@ const server=http.createServer(async(req,res)=>{
   await page.locator('.reply-card .copy-button').first().click();
   assert.equal(await app.evaluate(()=>globalThis.__syntheticCopy),'合成建议，仅用于测试。');checked.push('gesture-only-copy-bridge');
   await page.locator('#context-mode').selectOption('auto');
+  await page.locator('#auto-calibrate-title').click();
+  await page.waitForFunction(()=>document.querySelector('#auto-calibration-result').textContent.includes('已保存'));
+  const autoNumeric=JSON.parse(fs.readFileSync(path.join(fixture,'data','private','copilot','header-region.json'),'utf8'));
+  assert.deepEqual(autoNumeric.region,{x:340,y:16,width:100,height:48});assert.equal(calls,1);checked.push('one-click-numeric-calibration-no-cloud');
   await page.locator('#calibrate-title').click();
   await app.evaluate(()=>globalThis.__fixtureMark(100,40));
   await app.evaluate(()=>globalThis.__fixtureMark(340,72));

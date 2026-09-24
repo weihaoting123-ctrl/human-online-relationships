@@ -154,6 +154,7 @@ from import_store import (exclusive_import_lock, fingerprint_import,
 from dashboard.search import search_messages  # noqa: E402
 from dashboard import analysis as scoped_ai  # noqa: E402
 from dashboard.copilot import service as copilot  # noqa: E402
+from dashboard.copilot import live as copilot_live  # noqa: E402
 from dashboard.chat_heatmap import build_chat_heatmap  # noqa: E402
 from dashboard.library import (LibraryConflictError, LibraryNotFoundError,
                                LibraryValidationError)  # noqa: E402
@@ -1183,6 +1184,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if not self._authorized():
             return self._error(HTTPStatus.FORBIDDEN, "本地会话令牌无效")
         try:
+            if path in {"/api/copilot/live/preview", "/api/copilot/live/start", "/api/copilot/live/tick", "/api/copilot/live/stop"}:
+                if self.path != path or not 0 < int(self.headers.get("Content-Length", "0")) <= 8192:
+                    raise ValueError("限时建议请求路径或大小无效")
             request = self._read_request()
             if path == "/api/activity/heatmap":
                 if parsed.query or set(request) - {"bundle_id", "date_from", "date_to"}:
@@ -1198,11 +1202,11 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 library_service().require_visible(bundle_id)
                 return self._json({"status": "ok", "heatmap": heatmap})
             if path == "/api/library/conversations":
-                return self._json(library_service().update_conversation(request))
+                return self._json(copilot_live.mutate(library_service().update_conversation, request))
             if path == "/api/library/tags":
                 return self._json(library_service().update_tag(request))
             if path == "/api/modules":
-                return self._json(module_registry().update(request))
+                return self._json(copilot_live.mutate(module_registry().update, request))
             if path == "/api/copilot/binding/start":
                 module_registry().require('copilot')
                 return self._json(copilot.binding_start(DATA_DIR, _library_contacts(), request))
@@ -1213,10 +1217,18 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 return self._json(copilot.preview(DATA_DIR, _library_contacts(), request, admission=_copilot_admission))
             if path == "/api/copilot/run":
                 return self._json(copilot.run(DATA_DIR, _library_contacts(), request, admission=_copilot_admission))
+            if path == "/api/copilot/live/preview":
+                return self._json(copilot_live.preview(DATA_DIR, _library_contacts(), request, admission=_copilot_admission))
+            if path == "/api/copilot/live/start":
+                return self._json(copilot_live.start(DATA_DIR, _library_contacts(), request, admission=_copilot_admission))
+            if path == "/api/copilot/live/tick":
+                return self._json(copilot_live.tick(DATA_DIR, _library_contacts(), request, admission=_copilot_admission))
+            if path == "/api/copilot/live/stop":
+                return self._json(copilot_live.stop(DATA_DIR, _library_contacts(), request))
             if path == "/api/ai/config":
-                return self._json(scoped_ai.save_config(DATA_DIR, request))
+                return self._json(copilot_live.mutate(scoped_ai.save_config, DATA_DIR, request))
             if path == "/api/ai/config/clear":
-                return self._json(scoped_ai.clear_config(DATA_DIR))
+                return self._json(copilot_live.mutate(scoped_ai.clear_config, DATA_DIR))
             if path == "/api/ai/preview":
                 _analysis_admission(request.get('bundle_id'))
                 return self._json(scoped_ai.preview(DATA_DIR, CONTACTS_DIR, request))

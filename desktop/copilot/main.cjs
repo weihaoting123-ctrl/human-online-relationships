@@ -10,6 +10,7 @@ const {WindowController}=require('./window-controller.cjs');
 const {TitleObserver,validCalibration}=require('./title-observer.cjs');
 const {TitleReader}=require('./title-reader.cjs');
 const {TitleCalibration}=require('./title-calibration.cjs');
+const {AutoCalibration}=require('./auto-calibration.cjs');
 
 const root=path.resolve(__dirname,'../..');
 let options;
@@ -23,17 +24,19 @@ if(!lock)app.quit();
 
 let win,tray,controller,watcher,tickTimer,pageReady=false,quitting=false,editMode=false;
 let dragTimer;
-let titleObserver,titleReader,titleCalibration,titleTimer,recognitionEnabled=true;
+let titleObserver,titleReader,titleCalibration,titleAuto,titleTimer,recognitionEnabled=true;
 const safeSend=state=>{if(win&&!win.isDestroyed()&&pageReady)win.webContents.send('copilot:state',state)};
 const sendConversation=state=>{if(win&&!win.isDestroyed()&&pageReady)win.webContents.send('copilot:conversation',state)};
 function titleTarget(){
   const frame=controller?.frame;
   if(!pageReady||controller.paused||frame?.state!=='bound'||!frame.visible||frame.minimized
     ||(!frame.foreground&&frame.foreground_pid!==process.pid))return null;
-  return {id:frame.target,...screen.screenToDipRect(null,frame.rect)};
+  return {id:frame.target,...screen.screenToDipRect(null,frame.rect),
+    scale:screen.getDisplayMatching(screen.screenToDipRect(null,frame.rect)).scaleFactor};
 }
 function sampleTitle(fresh=false){
   if(!titleObserver)return Promise.resolve(null);
+  if(titleAuto?.active){titleAuto.check();return Promise.resolve(titleObserver.snapshot())}
   if(titleCalibration?.active)return Promise.resolve(titleObserver.snapshot());
   if(!recognitionEnabled||!titleTarget()){
     titleReader.stop(controller?.paused?'TITLE_PAUSED':'TITLE_INACTIVE');return Promise.resolve(titleObserver.snapshot());
@@ -58,6 +61,8 @@ function setupTitleReader(){
       fs.writeFileSync(temp,JSON.stringify({profile:'wechat-4.1.13',region}),{flag:'wx'});
       fs.renameSync(temp,regionFile);titleReader.setRegion(region);
     }});
+  titleAuto=new AutoCalibration({target:titleTarget,read:()=>titleReader.calibrate(),
+    stop:reason=>titleReader.stop(reason),save:region=>titleCalibration.save(region)});
   titleTimer=setInterval(()=>{titleObserver.tick();sampleTitle().catch(()=>titleReader.stop('TITLE_READER_UNAVAILABLE'))},1000);
 }
 
@@ -83,14 +88,14 @@ function startWatcher(){
     let newline;
     while((newline=buffer.indexOf('\n'))!==-1){
       const line=buffer.slice(0,newline).trim();buffer=buffer.slice(newline+1);if(!line)continue;
-      try{controller.update(JSON.parse(line))}catch{controller.fail('WINDOW_PROTOCOL_ERROR');stopWatcher();return}
+      try{controller.update(JSON.parse(line));titleAuto?.check()}catch{controller.fail('WINDOW_PROTOCOL_ERROR');stopWatcher();return}
     }
   });
   child.on('error',()=>{if(watcher===child){watcher=null;controller.fail('WINDOW_WATCH_FAILED')}});
   child.on('exit',()=>{if(watcher===child){watcher=null;controller.fail('WINDOW_WATCH_STOPPED')}});
 }
 function pause(value){
-  if(value){if(titleCalibration?.active)titleCalibration.cancel('TITLE_PAUSED');titleReader?.stop('TITLE_PAUSED')}
+  if(value){if(titleAuto?.active)titleAuto.cancel('TITLE_PAUSED');if(titleCalibration?.active)titleCalibration.cancel('TITLE_PAUSED');titleReader?.stop('TITLE_PAUSED')}
   controller.pause(value);
   if(value)stopWatcher();else startWatcher();
   buildMenu();
@@ -157,10 +162,15 @@ function create(){
     windowCommand(command,value);
     if(command==='conversationState')return titleObserver.snapshot();
     if(command==='refreshConversation')return sampleTitle(true);
-    if(command==='calibrateTitle'){titleCalibration.toggle();return titleObserver.snapshot()}
+    if(command==='calibrateTitle'){if(titleAuto.active)titleAuto.cancel();titleCalibration.toggle();return titleObserver.snapshot()}
+    if(command==='autoCalibrateTitle'){
+      if(!recognitionEnabled){titleReader.stop('TITLE_MANUAL');return titleObserver.snapshot()}
+      if(titleCalibration.active)titleCalibration.cancel();
+      return titleAuto.run().then(()=>titleObserver.snapshot()).catch(()=>titleObserver.clear('TITLE_AUTO_FAILED'));
+    }
     if(command==='recognition'){
       recognitionEnabled=value;
-      if(!value){if(titleCalibration.active)titleCalibration.cancel();titleReader.stop('TITLE_MANUAL')}
+      if(!value){if(titleAuto.active)titleAuto.cancel();if(titleCalibration.active)titleCalibration.cancel();titleReader.stop('TITLE_MANUAL')}
       return titleObserver.snapshot();
     }
     if(command==='mode'){controller.setMode(value);buildMenu()}
@@ -181,6 +191,6 @@ function create(){
   loadPage().then(startWatcher);
 }
 app.on('second-instance',()=>{}); // An accidental second launch must not steal focus.
-app.on('before-quit',()=>{quitting=true;clearInterval(tickTimer);clearInterval(titleTimer);clearTimeout(dragTimer);if(titleCalibration?.active)titleCalibration.cancel();titleReader?.stop();stopWatcher();tray?.destroy()});
+app.on('before-quit',()=>{quitting=true;clearInterval(tickTimer);clearInterval(titleTimer);clearTimeout(dragTimer);if(titleAuto?.active)titleAuto.cancel();if(titleCalibration?.active)titleCalibration.cancel();titleReader?.stop();stopWatcher();tray?.destroy()});
 app.on('window-all-closed',()=>app.quit());
 if(lock)app.whenReady().then(create).catch(()=>{console.error('COPILOT_START_FAILED');app.exit(1)});

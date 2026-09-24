@@ -71,6 +71,10 @@ class CopilotBrowserTests(unittest.TestCase):
         self.hold_preview = self.hold_run = False
         self.pending_preview = self.pending_run = None
         self.fail_run = False
+        self.hold_live_start = self.hold_live_tick = self.fail_live_tick = False
+        self.pending_live_start = self.pending_live_tick = None
+        self.live_tick_result = None
+        self.live_tick_reason = None
         self.enabled = True
         self.analysis_enabled = True
         self.modules_override = None
@@ -154,6 +158,37 @@ class CopilotBrowserTests(unittest.TestCase):
                 self.pending_binding = (route, response)
             else:
                 self.reply(route, response)
+        elif path.startswith('/api/copilot/live/'):
+            action = path.rsplit('/', 1)[1]
+            response = {'status': 'ok', 'session_id': 'f' * 48, 'state': 'active',
+                        'reason': 'LIVE_WAITING', 'binding_revision': body.get('binding_revision', 0),
+                        'remaining_seconds': 900, 'calls_used': 0, 'calls_remaining': 6, 'result': None}
+            if action == 'preview':
+                response = {'status': 'ok', 'preview_id': 'e' * 48,
+                    'binding_revision': body['binding_revision'], 'scope': body,
+                    'binding_required': True, 'account_verified': False,
+                    'recipient': {'configured': True, 'provider': 'openai', 'model': 'synthetic-model',
+                                  'endpoint': 'https://api.openai.com/v1/chat/completions'},
+                    'counts': {'sample_messages': 12, 'sample_chars': 1234},
+                    'limits': {'duration_seconds': 900, 'max_calls': 6, 'min_call_interval_seconds': 20,
+                               'debounce_seconds': 3, 'max_context_messages': 200, 'max_context_chars': 20000,
+                               'max_batch_messages': 20, 'max_batch_chars': 4000}}
+            elif action == 'stop':
+                response.update(state='stopped', reason='LIVE_STOPPED')
+            elif action == 'start' and self.hold_live_start:
+                self.pending_live_start = (route, response)
+                return
+            elif action == 'tick':
+                response['result'] = self.live_tick_result
+                if self.live_tick_reason:
+                    response.update(state='stopped', reason=self.live_tick_reason, result=None)
+                if self.hold_live_tick:
+                    self.pending_live_tick = (route, response)
+                    return
+                if self.fail_live_tick:
+                    self.reply(route, {'status': 'error', 'error': 'private-reader-detail'}, 502)
+                    return
+            self.reply(route, response)
         elif path == '/api/copilot/preview':
             response = {'status': 'ok', 'preview_id': 'a' * 48, 'binding_revision': body['binding_revision'],
                 'binding_required': 'binding_token' in body, 'account_verified': False,
@@ -210,6 +245,7 @@ class CopilotBrowserTests(unittest.TestCase):
                         onConversation:(callback)=>{window.conversationListener=callback; if(window.earlyConversation)window.emitConversation(window.earlyConversation); return ()=>{window.conversationListener=null;}},
                         setRecognition:(value)=>window.bridgeCalls.push(['recognition',value]),
                         calibrateTitle:()=>window.bridgeCalls.push(['calibrate']),
+                        autoCalibrateTitle:async()=>{window.bridgeCalls.push(['autoCalibrate']);return {state:'unavailable',reason:window.calibrationReason||'TITLE_CALIBRATION_SAVED'};},
                         refreshConversation:async()=>{window.bridgeCalls.push(['refreshConversation']);const value={...window.fixtureConversation,...window.nextRefresh,seq:window.fixtureConversation.seq+1};window.nextRefresh=null;window.emitConversation(value);return value;}
                       });
                     };attachRecognition();
@@ -242,6 +278,109 @@ class CopilotBrowserTests(unittest.TestCase):
         self.expect(self.page.locator('#date-from')).to_have_value('2026-03-02')
         self.expect(self.page.locator('#date-to')).to_have_value('2026-09-20')
         self.assertEqual(self.page.locator('input[type=checkbox]:checked').count(), 0)
+
+    def live_preview(self):
+        self.open(native='auto')
+        self.page.evaluate("emitConversation({state:'observed',title:'合成青禾',seq:2})")
+        self.expect(self.page.locator('#live-prepare')).to_be_enabled()
+        self.page.locator('#live-prepare').click()
+        self.expect(self.page.locator('#live-consent')).to_be_visible()
+
+    def live_start(self):
+        self.live_preview()
+        self.page.locator('#live-confirmed').check()
+        self.page.locator('#live-start').click()
+        self.expect(self.page.locator('#live-status')).to_contain_text('等待新消息')
+
+    def test_live_off_by_default_and_browser_cannot_start(self):
+        self.open()
+        self.select()
+        self.expect(self.page.locator('#live-prepare')).to_be_disabled()
+        self.assertFalse(any('/live/' in path for path, _ in self.writes))
+
+    def test_live_preview_is_explicit_pinned_scope_with_unchecked_consent(self):
+        self.live_preview()
+        self.expect(self.page.locator('#live-start')).to_be_disabled()
+        self.expect(self.page.locator('#live-consent')).to_contain_text('15 分钟')
+        self.expect(self.page.locator('#live-consent')).to_contain_text('6 次')
+        self.expect(self.page.locator('#live-consent')).to_contain_text('synthetic-model')
+        self.expect(self.page.locator('#live-consent')).to_contain_text('不会自动换人')
+        self.assertEqual([path for path, _ in self.writes if '/live/' in path], ['/api/copilot/live/preview'])
+
+    def test_live_native_switch_stops_and_never_restarts(self):
+        self.live_start()
+        self.page.evaluate("emitConversation({state:'observed',title:'合成云舟',seq:50})")
+        self.expect(self.page.locator('#live-start')).to_be_disabled()
+        self.expect(self.page.locator('#live-stop')).to_be_hidden()
+        self.page.wait_for_timeout(150)
+        self.assertEqual(len([path for path, _ in self.writes if path.endswith('/live/stop')]), 1)
+        self.assertEqual(len([path for path, _ in self.writes if path.endswith('/live/start')]), 1)
+
+    def test_live_late_start_is_revoked_after_scope_change(self):
+        self.hold_live_start = True
+        self.live_preview()
+        self.page.locator('#live-confirmed').check()
+        self.page.locator('#live-start').click()
+        self.page.wait_for_timeout(100)
+        self.page.evaluate("emitConversation({state:'unavailable',title:'',seq:50,reason:'TITLE_PAUSED'})")
+        route, response = self.pending_live_start
+        self.reply(route, response)
+        self.page.wait_for_timeout(100)
+        self.assertTrue(any(path.endswith('/live/stop') for path, _ in self.writes))
+        self.expect(self.page.locator('#live-stop')).to_be_hidden()
+
+    def test_live_tick_result_uses_existing_cards_and_compact_stop(self):
+        self.live_tick_result = {'result_id': 'synthetic-live-result',
+            'replies': [{'style': style, 'text': '合成自动建议 ' + XSS, 'reason': '合成说明'}
+                        for style in ('natural', 'warm', 'invite')], 'topics': [], 'caveats': []}
+        self.live_start()
+        self.expect(self.page.locator('.reply-card')).to_have_count(3, timeout=9000)
+        self.assertEqual(self.page.locator('.reply-card img').count(), 0)
+        self.page.evaluate("emitNative({state:'bound',target:'window-one',paused:false,mode:'dock',size:'compact',effectiveSize:'compact'})")
+        self.expect(self.page.locator('#live-compact-stop')).to_be_visible()
+        self.page.locator('#live-compact-stop').click()
+        self.expect(self.page.locator('#compact-suggestion')).to_be_hidden()
+        self.assertEqual(self.page.evaluate('localStorage.length'), 0)
+
+    def test_live_tick_failure_does_not_retry_or_echo_reader_error(self):
+        self.fail_live_tick = True
+        self.live_start()
+        self.expect(self.page.locator('#live-status')).to_contain_text('不会自动重试', timeout=9000)
+        self.assertNotIn('private-reader-detail', self.page.locator('body').inner_text())
+        self.page.wait_for_timeout(5300)
+        self.assertEqual(len([path for path, _ in self.writes if path.endswith('/live/tick')]), 1)
+
+    def test_live_late_tick_result_does_not_survive_stop(self):
+        self.hold_live_tick = True
+        self.live_tick_result = {'result_id': 'late', 'replies': [
+            {'style': style, 'text': '不应出现', 'reason': ''} for style in ('natural', 'warm', 'invite')],
+            'topics': [], 'caveats': []}
+        self.live_start()
+        self.page.wait_for_timeout(5400)
+        self.page.locator('#live-stop').click()
+        route, response = self.pending_live_tick
+        self.reply(route, response)
+        self.page.wait_for_timeout(100)
+        self.expect(self.page.locator('.reply-card')).to_have_count(0)
+
+    def test_live_stopped_provider_failure_discloses_possible_charge(self):
+        self.live_tick_reason = 'CALL_FAILED_POSSIBLY_CHARGED'
+        self.live_start()
+        self.expect(self.page.locator('#live-status')).to_contain_text('可能已计费', timeout=9000)
+        self.expect(self.page.locator('#live-status')).to_contain_text('不会自动重试')
+        self.expect(self.page.locator('#live-stop')).to_be_hidden()
+
+    def test_live_stopped_expiry_is_not_mislabelled_as_safety_failure(self):
+        self.live_tick_reason = 'SESSION_EXPIRED'
+        self.live_start()
+        self.expect(self.page.locator('#live-status')).to_contain_text('授权已到期', timeout=9000)
+        self.assertNotIn('安全检查未通过', self.page.locator('#live-status').inner_text())
+
+    def test_live_future_message_time_has_specific_scope_error(self):
+        self.live_tick_reason = 'SOURCE_TIME_OUT_OF_RANGE'
+        self.live_start()
+        self.expect(self.page.locator('#live-status')).to_contain_text('消息时间超出本次授权范围', timeout=9000)
+        self.expect(self.page.locator('#live-stop')).to_be_hidden()
 
     def test_run_requires_click_then_shows_literal_result_and_topics(self):
         self.open()
@@ -502,6 +641,28 @@ class CopilotBrowserTests(unittest.TestCase):
         self.expect(self.page.locator('#date-from')).to_have_value('2026-03-02')
         self.assertFalse(any(path.endswith(('/preview', '/run')) for path, _ in self.writes))
         self.assertEqual(self.page.evaluate('localStorage.length'), 0)
+
+    def test_one_click_calibration_works_without_enabling_ai_or_sending(self):
+        self.enabled = False
+        self.analysis_enabled = False
+        self.open(native='auto')
+        self.expect(self.page.locator('#auto-calibrate-title')).to_be_visible()
+        self.page.locator('#auto-calibrate-title').click()
+        self.expect(self.page.locator('#auto-calibration-result')).to_contain_text('已保存')
+        self.assertIn(['autoCalibrate'], self.page.evaluate('bridgeCalls'))
+        self.assertFalse(any(path.endswith(('/preview', '/run')) or path == '/api/modules' for path, _ in self.writes))
+        self.expect(self.page.locator('#binding-confirmed')).not_to_be_checked()
+        self.page.locator('#context-mode').select_option('manual')
+        self.expect(self.page.locator('#auto-calibrate-title')).to_be_disabled()
+
+    def test_auto_calibration_failure_is_specific_and_browser_has_no_button(self):
+        self.open(native='auto')
+        self.page.evaluate("window.calibrationReason='TITLE_OCCLUDED'")
+        self.page.locator('#auto-calibrate-title').click()
+        self.expect(self.page.locator('#auto-calibration-result')).to_contain_text('遮挡')
+        self.page.evaluate("emitConversation({state:'unavailable',reason:'TITLE_CALIBRATION_REQUIRED',seq:9,title:''})")
+        self.expect(self.page.locator('#auto-calibration-result')).to_contain_text('遮挡')
+        self.assertEqual(len([c for c in self.page.evaluate('bridgeCalls') if c[0]=='autoCalibrate']), 1)
 
     def test_automatic_preview_requires_unchecked_identity_checkbox_and_fresh_read(self):
         self.open(native='auto')

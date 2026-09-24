@@ -24,11 +24,21 @@
 
 实时消息捕获、最新同城活动来源、macOS/Linux 原生伴随和开机自启保留为后续候选，不用历史归档或模拟活动冒充已实现。
 
-## 用户指定独立迭代：COPILOT-02 / 1.0.0-rc.2
+## 用户指定独立迭代：COPILOT-03 / 1.0.0-rc.4
+
+P2，待实机验收。[主 Issue #48](https://github.com/weihaoting123-ctrl/human-online-relationships/issues/48) · [PR #47](https://github.com/weihaoting123-ctrl/human-online-relationships/pull/47) · [候选审查记录](docs/reviews/v1.0.0-rc.4-review.md)。
+
+固定私聊近期文字辅助：默认关闭，用户另行核对固定来源、历史范围、未来文字与接收方后限时自动建议。15 分钟 / 6 次尝试 / 20 秒间隔；基线不发云、稳定身份去重、只读副本、我方文字取消待生成内容、停止与未知失败不自动恢复。UI 与服务端、读取器分别合成验收。
+
+这是可验证的固定来源能力，不假装机器证明当前 UI 身份。OCR 仅尽力暂停，同名切换可能漏检但不会自动改变发送对象。实际读取延迟、真实微信兼容性及实际模型质量仍待授权验收，不能据此关闭正式 1.0 验收项。见[规格](docs/superpowers/specs/2026-09-24-pinned-live-copilot.md)与[计划](docs/superpowers/plans/2026-09-24-pinned-live-copilot.md)。
+
+## 用户指定独立迭代：COPILOT-02 / 1.0.0-rc.3
 
 当前会话本机标题识别，P2，待验收。[主 Issue #46](https://github.com/weihaoting123-ctrl/human-online-relationships/issues/46) · [设计](docs/superpowers/specs/2026-09-24-copilot-auto-context-design.md) · [审查记录](docs/reviews/v1.0.0-rc.2-review.md) · [使用与限制](docs/copilot.md)。
 
 Windows 微信 4.1.13.x 通过一次性标题区域校准、内存中 OCR、唯一同名归档候选与过期绑定完成自动选择。匹配不等于账号/联系人身份认证；每次发送仍需核对候选、范围及费用。切换、失联、暂停、过期或元数据变化撤销旧授权。合成材料验收，不读取或发布真实标题、截图、正文。实机首次校准、更多版本与混合 DPI 保留验收门槛，不提前标正式 1.0。
+
+RC3 增补一次点击的本机自动校准，不必手动标角；受支持标准布局的固定顶部条带两轮一致才保存。失败可保留手动标记，不扩张截图范围。见[有界计划](docs/plans/2026-09-24-title-auto-calibration.md)。
 
 ## A：先修好首次使用闭环（v0.1.1，已发布）
 

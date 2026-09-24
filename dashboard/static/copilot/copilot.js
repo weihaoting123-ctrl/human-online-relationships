@@ -4,6 +4,7 @@
   'use strict';
   const $ = (selector) => document.querySelector(selector);
   const bridge = window.copilotDesktop;
+  let live = null;
   const recognitionAvailable = ['conversationState', 'onConversation', 'setRecognition', 'refreshConversation']
     .every((method) => typeof bridge?.[method] === 'function');
   const OBSERVATION_TTL_MS = 9500;
@@ -14,7 +15,7 @@
     mode: recognitionAvailable ? 'auto' : 'manual', modeEpoch: 0, observationVersion: 0,
     observationSeq: -1, observation: null, observationKey: '', bindingToken: null,
     sessionId: null, serverSeq: 0, bindingQueue: Promise.resolve(), bindingTimer: null,
-    pendingObservation: null,
+    pendingObservation: null, autoBusy: false, autoAttempt: 0,
   };
   const make = (tag, className, text) => {
     const node = document.createElement(tag);
@@ -34,7 +35,7 @@
   }
   async function request(path, body) {
     const controller = new AbortController();
-    const timeout = window.setTimeout(() => controller.abort(), path.endsWith('/run') ? 130000 : path.includes('/binding') ? 8000 : 30000);
+    const timeout = window.setTimeout(() => controller.abort(), path.includes('/live/') ? 240000 : path.endsWith('/run') ? 130000 : path.includes('/binding') ? 8000 : 30000);
     try {
       const response = await fetch(path, {
         method: body === undefined ? 'GET' : 'POST', credentials: 'same-origin',
@@ -77,12 +78,14 @@
       && (state.mode !== 'auto' || Boolean(state.bindingToken) && observationFresh(state.observation)) && validScope();
   }
   function renderControls() {
-    $('#prepare-preview').disabled = !ready() || state.previewBusy || state.runBusy || state.loading || state.enabling;
+    $('#prepare-preview').disabled = !ready() || live?.blocked() || state.previewBusy || state.runBusy || state.loading || state.enabling;
     $('#prepare-preview').textContent = state.previewBusy ? '正在核对范围…' : state.runBusy ? '正在生成…' : '核对本次发送范围';
-    $('#confirm-run').disabled = !ready() || !state.preview || state.previewBusy || state.runBusy || state.loading
+    $('#confirm-run').disabled = !ready() || live?.blocked() || !state.preview || state.previewBusy || state.runBusy || state.loading
       || (state.mode === 'auto' && !$('#binding-confirmed').checked);
     $('#contact-select').disabled = state.mode === 'auto';
-    $('#calibrate-title').disabled = state.paused || state.mode !== 'auto';
+    $('#calibrate-title').disabled = state.paused || state.mode !== 'auto' || state.autoBusy;
+    $('#auto-calibrate-title').disabled = state.paused || state.mode !== 'auto';
+    $('#auto-calibrate-title').textContent = state.autoBusy ? '取消自动校准' : '自动校准标题';
     $('#refresh-status').disabled = state.loading || state.enabling;
     $('#enable-copilot').disabled = state.enabling || state.loading || !moduleEnabled('analysis');
     $('#enable-copilot').hidden = !moduleById('copilot') || moduleEnabled('copilot');
@@ -96,14 +99,9 @@
     else if (selected() && !validScope()) message = '请选择归档日期内的范围，条数上限为 200。';
     else if (selected()) message = '范围预览在本机完成，确认后才会调用模型。';
     $('#module-status').textContent = message;
+    live?.render();
   }
-  function invalidate({ clearPerson = false, clearDraft = false } = {}) {
-    state.revision += 1;
-    state.preview = null;
-    $('#binding-confirmed').checked = false;
-    $('#binding-confirmation').hidden = true;
-    $('#consent-panel').hidden = true;
-    $('#preview-facts').replaceChildren();
+  function clearResult() {
     $('#replies-list').replaceChildren();
     state.compactReply = '';
     $('#compact-reply').textContent = '';
@@ -114,6 +112,16 @@
     $('#caveats').hidden = true;
     $('#replies-empty').hidden = false;
     $('#topics-empty').hidden = false;
+  }
+  function invalidate({ clearPerson = false, clearDraft = false } = {}) {
+    live?.invalidate();
+    state.revision += 1;
+    state.preview = null;
+    $('#binding-confirmed').checked = false;
+    $('#binding-confirmation').hidden = true;
+    $('#consent-panel').hidden = true;
+    $('#preview-facts').replaceChildren();
+    clearResult();
     if (clearPerson) $('#contact-select').value = '';
     if (clearDraft || clearPerson) $('#latest-draft').value = '';
     if (clearPerson) renderContext(true);
@@ -127,6 +135,19 @@
     TITLE_STABILIZING: '会话标题正在变化，等待稳定后再建议归档。',
     TITLE_PAUSED: '自动识别已暂停。',
     TITLE_UNAVAILABLE: '当前会话标题暂不可识别，请等待或手动选择归档。',
+    TITLE_AUTO_CALIBRATING: '正在本机定位标题条，请保持微信前台且无遮挡…',
+    TITLE_CALIBRATION_SAVED: '标题区域已保存，随后会连续检查识别结果。',
+    TITLE_OCCLUDED: '标题条被遮挡或超出屏幕，未保存；请移开遮挡后再校准。',
+    TITLE_WINDOW_UNAVAILABLE: '未找到唯一可用的前台微信窗口，请保持微信可见后再校准。',
+    TITLE_TARGET_CHANGED: '校准期间窗口或前台发生变化，未保存；请保持窗口稳定后再试。',
+    TITLE_AUTO_CALIBRATION_UNSTABLE: '两次标题检查不一致，未保存；请保持会话和窗口稳定。',
+    TITLE_AUTO_CALIBRATION_LAYOUT_UNSUPPORTED: '当前窗口布局不支持自动校准，请使用手动标记。',
+    TITLE_AUTO_CALIBRATION_UNREADABLE: '标题条未读到唯一完整文字，未保存；可改用手动标记。',
+    TITLE_AUTO_CALIBRATION_UNAVAILABLE: '本机自动校准未完成，原设置保留；可改用手动标记。',
+    TITLE_AUTO_FAILED: '本机自动校准未完成，原设置保留；不会自动重试。',
+    TITLE_AUTO_TIMEOUT: '本机校准超时，原设置保留；不会自动重试。',
+    TITLE_CALIBRATION_CANCELLED: '自动校准已取消，原设置保留。',
+    TITLE_SAVE_FAILED: '无法保存标题区域，未完成校准。',
   };
   function clearAutomatic() {
     window.clearTimeout(state.bindingTimer);
@@ -248,7 +269,8 @@
       clearAutomatic();
     }
     if (frame.state !== 'observed') recognitionStatus(titleReasons[frame.reason] || titleReasons.TITLE_UNAVAILABLE, frame.reason);
-    else if (!state.bindingToken) recognitionStatus('正在核对本机归档名称…');
+    else if (!state.bindingToken) recognitionStatus(moduleEnabled('copilot')
+      ? '正在核对本机归档名称…' : '本机标题已稳定识别；回复助手未启用，尚未匹配归档。');
     queueObservation(frame);
   }
   function revokeSession() {
@@ -262,6 +284,8 @@
     return state.bindingQueue;
   }
   function changeContextMode() {
+    state.autoAttempt += 1; state.autoBusy = false;
+    $('#auto-calibration-result').textContent = '';
     state.mode = recognitionAvailable && $('#context-mode').value === 'auto' ? 'auto' : 'manual';
     state.modeEpoch += 1;
     state.observationVersion += 1;
@@ -394,7 +418,7 @@
     $('#consent-panel').hidden = false;
   }
   async function prepare() {
-    if (!ready() || state.previewBusy || state.runBusy || state.loading) return;
+    if (!ready() || live?.blocked() || state.previewBusy || state.runBusy || state.loading) return;
     const revision = state.revision, token = state.bindingToken;
     let scope;
     state.previewBusy = true;
@@ -469,7 +493,7 @@
     $('#compact-suggestion').hidden = false;
   }
   async function run() {
-    if (!ready() || !state.preview || state.previewBusy || state.runBusy || state.loading
+    if (!ready() || live?.blocked() || !state.preview || state.previewBusy || state.runBusy || state.loading
       || (state.mode === 'auto' && !$('#binding-confirmed').checked)) return;
     const preview = state.preview;
     const revision = state.revision, token = state.bindingToken;
@@ -542,6 +566,23 @@
   $('#context-mode').addEventListener('change', changeContextMode);
   $('#binding-confirmed').addEventListener('change', renderControls);
   $('#calibrate-title').hidden = !recognitionAvailable || typeof bridge?.calibrateTitle !== 'function';
+  $('#auto-calibrate-title').hidden = !recognitionAvailable || typeof bridge?.autoCalibrateTitle !== 'function';
+  $('#auto-calibrate-title').addEventListener('click', async () => {
+    const attempt = ++state.autoAttempt, epoch = state.modeEpoch;
+    state.autoBusy = !state.autoBusy;
+    state.observationVersion += 1;
+    state.observation = null; state.observationKey = '';
+    clearAutomatic(); revokeSession();
+    $('#auto-calibration-result').textContent = state.autoBusy ? titleReasons.TITLE_AUTO_CALIBRATING : '正在取消…';
+    renderControls();
+    try {
+      const result = await bridge.autoCalibrateTitle();
+      if (attempt !== state.autoAttempt || epoch !== state.modeEpoch) return;
+      $('#auto-calibration-result').textContent = titleReasons[result?.reason] || titleReasons.TITLE_AUTO_FAILED;
+    } catch (_) {
+      if (attempt === state.autoAttempt) $('#auto-calibration-result').textContent = titleReasons.TITLE_AUTO_FAILED;
+    } finally { if (attempt === state.autoAttempt) { state.autoBusy = false; renderControls(); } }
+  });
   $('#calibrate-title').addEventListener('click', () => {
     state.observationVersion += 1;
     state.observation = null;
@@ -622,5 +663,10 @@
       window.clearTimeout(state.bindingTimer);
     });
   }
+  live = window.CopilotLive?.create({ request, ready, scope: currentScope,
+    mode: () => state.mode, busy: () => state.previewBusy || state.runBusy || state.loading || state.enabling,
+    revision: () => state.revision, fresh: freshAutomatic, controls: renderControls,
+    reset: invalidate, clearResult, renderResult, validResult, name: () => selected()?.name || '',
+  });
   refresh();
 })();
