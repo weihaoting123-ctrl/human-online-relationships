@@ -12,6 +12,19 @@ contextBridge.exposeInMainWorld('copilotDesktop',Object.freeze({
   },
   close:()=>invoke('close'),
   state:()=>invoke('state'),
+  conversationState:()=>invoke('conversationState'),
+  refreshConversation:()=>invoke('refreshConversation'),
+  setRecognition:value=>invoke('recognition',value),
+  calibrateTitle:()=>{
+    if(!navigator.userActivation.isActive)return Promise.reject(new Error('COPILOT_USER_GESTURE_REQUIRED'));
+    return invoke('calibrateTitle');
+  },
+  onConversation:callback=>{
+    if(typeof callback!=='function')throw new TypeError('A callback is required');
+    const listener=(_event,state)=>callback(state);
+    ipcRenderer.on('copilot:conversation',listener);
+    return ()=>ipcRenderer.removeListener('copilot:conversation',listener);
+  },
   onState:callback=>{
     if(typeof callback!=='function')throw new TypeError('A callback is required');
     const listener=(_event,state)=>callback(state);

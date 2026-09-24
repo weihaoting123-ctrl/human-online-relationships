@@ -35,7 +35,14 @@
         <select id="window-mode"><option value="dock">贴边跟随</option><option value="float">自由悬浮</option></select>
         <button id="pause-follow" class="quiet-button" type="button" aria-pressed="false">暂停跟随</button>
       </div>
-      <p class="capability-note">联系人与实时消息识别未接入。请手动选择会话；建议依据本机归档和你补充的文字。</p>
+      <section class="recognition-controls" aria-label="当前会话识别">
+        <label for="context-mode">会话选择方式</label>
+        <select id="context-mode"><option value="manual">手动选择归档</option><option value="auto" disabled>识别当前微信标题</option></select>
+        <p id="recognition-status" class="capability-note" role="status">浏览器模式：请手动选择归档会话。</p>
+        <button id="calibrate-title" class="quiet-button" type="button" hidden>标记标题区域</button>
+        <p id="calibration-help" class="field-note" hidden>首次使用请标记标题区域：将鼠标移到标题左上角，按 Ctrl+Alt+F8；再移到右下角按同一热键，四周留少量空白。60 秒内完成。支持 Windows 微信 4.1.13；布局变化后需重新标记。</p>
+      </section>
+      <p class="capability-note">仅在本机识别标题并建议同名归档，无法核验账号或联系人身份。建议依据归档和你补充的文字，不读取实时消息正文。</p>
 
       <section class="context-card" aria-labelledby="context-heading">
         <div class="context-heading"><span class="eyebrow">本次会话</span><button id="choose-context" class="text-button" type="button">选择 / 修改</button></div>
@@ -73,6 +80,7 @@
         <dl id="preview-facts"></dl>
         <p>仅发送所选范围内的脱敏文字与补充内容，不含图片、音频。自动脱敏无法保证自由文本完全匿名。</p>
         <p class="cost-note">最多调用 1 次，可能产生服务商费用。失败不会自动重试；再次调用可能重复计费。</p>
+        <label id="binding-confirmation" class="binding-confirmation" hidden><input id="binding-confirmed" type="checkbox"><span>我已核对当前微信账号、联系人与上方归档一致；标题匹配本身不能核验身份。</span></label>
         <div class="consent-actions"><button id="confirm-run" class="primary-button" type="button" disabled>确认发送并生成一次</button><button id="cancel-preview" class="text-button" type="button">取消</button></div>
       </section>
 

@@ -14,9 +14,13 @@ MAX_DRAFT_CHARS = 4000
 
 
 def scope(request):
-    allowed = {'bundle_id', 'date_from', 'date_to', 'max_messages', 'direction', 'latest_draft', 'binding_revision'}
+    allowed = {'bundle_id', 'date_from', 'date_to', 'max_messages', 'direction', 'latest_draft',
+               'binding_revision', 'binding_token'}
     if not isinstance(request, dict) or set(request) - allowed:
         raise ai.AnalysisError('回复建议请求格式无效')
+    if 'binding_token' in request and (not isinstance(request['binding_token'], str)
+                                      or not ai.ID_RE.fullmatch(request['binding_token'])):
+        raise ai.AnalysisError('当前会话候选无效，请重新识别并预览')
     bundle_id = request.get('bundle_id')
     if (not isinstance(bundle_id, str) or not bundle_id or len(bundle_id) > 240
             or any(char in bundle_id for char in '/\\\x00') or bundle_id in {'.', '..'}):

@@ -75,6 +75,13 @@ class CopilotBrowserTests(unittest.TestCase):
         self.analysis_enabled = True
         self.modules_override = None
         self.status_conversations = None
+        self.hold_binding = False
+        self.pending_binding = None
+        self.binding_identity = None
+        self.binding_counter = 0
+        self.binding_token = None
+        self.binding_session = None
+        self.binding_session_counter = 0
         self.page.on('pageerror', lambda error: self.errors.append(str(error)))
         self.page.on('dialog', lambda dialog: (self.dialogs.append(dialog.message), dialog.dismiss()))
         self.page.on('request', lambda request: self.requests.append(request.url))
@@ -120,8 +127,36 @@ class CopilotBrowserTests(unittest.TestCase):
                 'capabilities': {'archive_context': True, 'live_capture': False, 'auto_send': False,
                                  'max_messages': 200, 'max_chars': 20000, 'max_calls': 1},
                 **({'conversations': self.status_conversations} if self.status_conversations is not None else {})})
+        elif path == '/api/copilot/binding/start':
+            self.binding_identity = None
+            self.binding_session_counter += 1
+            self.binding_session = format(self.binding_session_counter, '048x')
+            self.reply(route, {'status': 'ok', 'session_id': self.binding_session})
+        elif path == '/api/copilot/binding':
+            if body.get('session_id') != self.binding_session:
+                self.reply(route, {'state': 'unavailable', 'reason': '识别会话已失效，请重新开启自动识别',
+                                   'observation_seq': 0, 'account_verified': False})
+                return
+            identity = (body.get('target'), body.get('title')) if body.get('state') == 'observed' else None
+            if identity != self.binding_identity:
+                self.binding_counter += 1
+                self.binding_token = format(self.binding_counter, '048x')
+                self.binding_identity = identity
+            bundle = {'合成青禾': 'fixture-0', '合成云舟': 'fixture-1'}.get(body.get('title'))
+            response = {'state': 'unavailable', 'reason': '当前会话暂不可识别',
+                        'observation_seq': body['seq'], 'account_verified': False}
+            if identity and bundle:
+                response.update(state='suggested', reason='仅名称精确匹配，请核对当前微信账号和联系人',
+                                bundle_id=bundle, binding_token=self.binding_token)
+            elif identity and body.get('title') == '同名合成':
+                response.update(state='ambiguous', reason='存在同名归档，请手动选择')
+            if self.hold_binding:
+                self.pending_binding = (route, response)
+            else:
+                self.reply(route, response)
         elif path == '/api/copilot/preview':
             response = {'status': 'ok', 'preview_id': 'a' * 48, 'binding_revision': body['binding_revision'],
+                'binding_required': 'binding_token' in body, 'account_verified': False,
                 'scope': body, 'recipient': {'configured': True, 'provider': 'openai', 'model': 'synthetic-model',
                 'endpoint': 'https://api.openai.com/v1/chat/completions'},
                 'counts': {'scope_messages': 123, 'eligible_messages': 123, 'sample_messages': 12,
@@ -163,6 +198,22 @@ class CopilotBrowserTests(unittest.TestCase):
                   copy:async(value)=>{window.bridgeCalls.push(['copy',value]);if(window.nativeCopyFails)throw new Error('private-copy-error');},
                   close:()=>window.bridgeCalls.push(['close']),edit:(value)=>window.bridgeCalls.push(['edit',value])};
             """)
+            if native == 'auto':
+                self.page.add_init_script("""
+                    const attachRecognition=()=>{
+                      if (!window.copilotDesktop) {queueMicrotask(attachRecognition); return;}
+                      window.fixtureConversation={state:'unavailable',title:'',target:'window-one',source:'local_ocr',seq:1,reason:'TITLE_CALIBRATION_REQUIRED'};
+                      window.conversationListener=null;
+                      window.emitConversation=(value)=>{window.fixtureConversation={source:'local_ocr',target:'window-one',...value};window.conversationListener?.(window.fixtureConversation);};
+                      Object.assign(window.copilotDesktop,{
+                        conversationState:async()=>window.fixtureConversation,
+                        onConversation:(callback)=>{window.conversationListener=callback; if(window.earlyConversation)window.emitConversation(window.earlyConversation); return ()=>{window.conversationListener=null;}},
+                        setRecognition:(value)=>window.bridgeCalls.push(['recognition',value]),
+                        calibrateTitle:()=>window.bridgeCalls.push(['calibrate']),
+                        refreshConversation:async()=>{window.bridgeCalls.push(['refreshConversation']);const value={...window.fixtureConversation,...window.nextRefresh,seq:window.fixtureConversation.seq+1};window.nextRefresh=null;window.emitConversation(value);return value;}
+                      });
+                    };attachRecognition();
+                """)
         self.page.goto(self.url + 'copilot/index.html', wait_until='networkidle')
         self.expect(self.page.locator('#contact-select option')).to_have_count(4)
 
@@ -433,3 +484,216 @@ class CopilotBrowserTests(unittest.TestCase):
         self.expect(self.page.locator('#preview-facts')).to_contain_text('111 条未取用')
         self.expect(self.page.locator('#preview-facts')).to_contain_text('1 条被截断')
         self.assertFalse(any(path.endswith('/run') for path, _ in self.writes))
+
+    def observe(self, seq, title='合成青禾', state='observed'):
+        self.page.evaluate('(value)=>emitConversation(value)', {'seq': seq, 'title': title,
+            'state': state, 'reason': 'TITLE_UNAVAILABLE' if state == 'unavailable' else ''})
+
+    def test_native_auto_selects_candidate_without_preview_or_cloud(self):
+        self.open(native='auto')
+        self.expect(self.page.locator('#context-mode')).to_have_value('auto')
+        self.expect(self.page.locator('#recognition-status')).to_contain_text('标题区域')
+        self.page.locator('#calibrate-title').click()
+        self.assertIn(['calibrate'], self.page.evaluate('bridgeCalls'))
+        self.observe(2)
+        self.expect(self.page.locator('#contact-select')).to_have_value('fixture-0')
+        self.expect(self.page.locator('#context-heading')).to_have_text('合成青禾')
+        self.expect(self.page.locator('#recognition-status')).to_contain_text('待核对')
+        self.expect(self.page.locator('#date-from')).to_have_value('2026-03-02')
+        self.assertFalse(any(path.endswith(('/preview', '/run')) for path, _ in self.writes))
+        self.assertEqual(self.page.evaluate('localStorage.length'), 0)
+
+    def test_automatic_preview_requires_unchecked_identity_checkbox_and_fresh_read(self):
+        self.open(native='auto')
+        self.observe(2)
+        self.expect(self.page.locator('#contact-select')).to_have_value('fixture-0')
+        self.page.locator('#prepare-preview').click()
+        self.expect(self.page.locator('#consent-panel')).to_be_visible()
+        self.expect(self.page.locator('#binding-confirmed')).not_to_be_checked()
+        self.expect(self.page.locator('#confirm-run')).to_be_disabled()
+        self.page.locator('#binding-confirmed').check()
+        self.page.locator('#confirm-run').click()
+        self.expect(self.page.locator('.reply-card')).to_have_count(3)
+        self.assertEqual(len([call for call in self.page.evaluate('bridgeCalls') if call[0] == 'refreshConversation']), 2)
+        preview = next(body for path, body in self.writes if path.endswith('/preview'))
+        run = next(body for path, body in self.writes if path.endswith('/run'))
+        self.assertIn('binding_token', preview)
+        self.assertTrue(run['binding_confirmed'])
+        self.assertNotIn('title', preview)
+        self.assertNotIn('title', run)
+
+    def test_stable_heartbeat_retains_preview_and_change_clears_all_context(self):
+        self.open(native='auto')
+        self.observe(2)
+        self.expect(self.page.locator('#contact-select')).to_have_value('fixture-0')
+        self.page.locator('#context-settings').evaluate('(node)=>node.open=true')
+        self.page.locator('#latest-draft').fill('合成草稿')
+        self.page.locator('#prepare-preview').click()
+        self.expect(self.page.locator('#consent-panel')).to_be_visible()
+        self.page.locator('#binding-confirmed').check()
+        self.observe(4)
+        self.expect(self.page.locator('#consent-panel')).to_be_visible()
+        self.expect(self.page.locator('#binding-confirmed')).to_be_checked()
+        self.observe(5, '合成云舟')
+        self.expect(self.page.locator('#contact-select')).to_have_value('fixture-1')
+        self.expect(self.page.locator('#latest-draft')).to_have_value('')
+        self.expect(self.page.locator('#consent-panel')).to_be_hidden()
+        self.expect(self.page.locator('#binding-confirmed')).not_to_be_checked()
+        self.assertFalse(any(path.endswith('/run') for path, _ in self.writes))
+
+    def test_unknown_ambiguous_and_late_binding_responses_never_select(self):
+        self.open(native='auto')
+        self.hold_binding = True
+        self.observe(2)
+        self.page.wait_for_timeout(150)
+        self.assertIsNotNone(self.pending_binding)
+        self.observe(3, '未知合成')
+        self.hold_binding = False
+        self.reply(*self.pending_binding)
+        self.page.wait_for_timeout(150)
+        self.expect(self.page.locator('#contact-select')).to_have_value('')
+        self.expect(self.page.locator('#prepare-preview')).to_be_disabled()
+        self.observe(4, '同名合成')
+        self.expect(self.page.locator('#recognition-status')).to_contain_text('同名')
+        self.expect(self.page.locator('#contact-select')).to_have_value('')
+
+    def test_fresh_read_change_prevents_send_and_manual_mode_revokes_binding(self):
+        self.open(native='auto')
+        self.observe(2)
+        self.expect(self.page.locator('#contact-select')).to_have_value('fixture-0')
+        self.page.locator('#prepare-preview').click()
+        self.expect(self.page.locator('#consent-panel')).to_be_visible()
+        self.page.locator('#binding-confirmed').check()
+        self.page.evaluate("window.nextRefresh={state:'observed',title:'合成云舟'}")
+        self.page.locator('#confirm-run').click()
+        self.expect(self.page.locator('#contact-select')).to_have_value('fixture-1')
+        self.expect(self.page.locator('#consent-panel')).to_be_hidden()
+        self.assertFalse(any(path.endswith('/run') for path, _ in self.writes))
+        self.page.locator('#context-mode').select_option('manual')
+        self.expect(self.page.locator('#contact-select')).to_have_value('')
+        self.assertIn(['recognition', False], self.page.evaluate('bridgeCalls'))
+        self.select()
+        self.expect(self.page.locator('#prepare-preview')).to_be_enabled()
+        self.page.wait_for_timeout(100)
+        self.assertEqual([body for path, body in self.writes if path.endswith('/binding')][-1]['state'], 'unavailable')
+
+    def test_observation_before_status_refresh_is_applied_after_metadata_load(self):
+        self.page.add_init_script("window.earlyConversation={state:'observed',title:'合成青禾',seq:2};")
+        self.open(native='auto')
+        self.expect(self.page.locator('#contact-select')).to_have_value('fixture-0')
+
+    def test_late_model_result_after_conversation_change_is_discarded(self):
+        self.open(native='auto')
+        self.observe(2)
+        self.expect(self.page.locator('#contact-select')).to_have_value('fixture-0')
+        self.page.locator('#prepare-preview').click()
+        self.expect(self.page.locator('#consent-panel')).to_be_visible()
+        self.page.locator('#binding-confirmed').check()
+        self.hold_run = True
+        self.page.locator('#confirm-run').click()
+        self.page.wait_for_timeout(150)
+        self.assertIsNotNone(self.pending_run)
+        self.observe(5, '', state='unavailable')
+        self.reply(*self.pending_run)
+        self.expect(self.page.locator('#contact-select')).to_have_value('')
+        self.expect(self.page.locator('.reply-card')).to_have_count(0)
+
+    def test_window_switch_does_not_replay_old_title_when_status_is_refreshed(self):
+        self.open(native='auto')
+        self.observe(2)
+        self.expect(self.page.locator('#contact-select')).to_have_value('fixture-0')
+        self.page.evaluate("emitNative({state:'bound',target:'window-two',paused:false,mode:'dock',size:'expanded',effectiveSize:'expanded'})")
+        self.expect(self.page.locator('#contact-select')).to_have_value('')
+        self.page.locator('#refresh-status').click()
+        self.page.wait_for_timeout(200)
+        self.expect(self.page.locator('#contact-select')).to_have_value('')
+
+    def test_pending_stable_heartbeats_coalesce_to_latest_observation(self):
+        self.open(native='auto')
+        self.hold_binding = True
+        self.observe(2)
+        self.page.wait_for_timeout(100)
+        self.assertIsNotNone(self.pending_binding)
+        for seq in range(3, 8):
+            self.observe(seq)
+        self.hold_binding = False
+        self.reply(*self.pending_binding)
+        self.page.wait_for_timeout(200)
+        self.expect(self.page.locator('#contact-select')).to_have_value('fixture-0')
+        self.assertLessEqual(len([body for path, body in self.writes if path.endswith('/binding')]), 3)
+
+    def test_expired_cached_title_cannot_be_reposted_by_status_refresh(self):
+        # Advance monotonic time without waiting for or relying on a timer callback.
+        self.page.add_init_script("""
+            window.syntheticMonotonic=0;
+            Object.defineProperty(performance,'now',{value:()=>window.syntheticMonotonic});
+        """)
+        self.open(native='auto')
+        self.observe(2)
+        self.expect(self.page.locator('#contact-select')).to_have_value('fixture-0')
+        observed_before = len([body for path, body in self.writes
+                               if path.endswith('/binding') and body['state'] == 'observed'])
+        self.page.evaluate('window.syntheticMonotonic=9500')
+        self.page.locator('#refresh-status').click()
+        self.expect(self.page.locator('#recognition-status')).to_contain_text('过期')
+        self.expect(self.page.locator('#contact-select')).to_have_value('')
+        self.expect(self.page.locator('#prepare-preview')).to_be_disabled()
+        self.assertEqual(len([body for path, body in self.writes
+                              if path.endswith('/binding') and body['state'] == 'observed']), observed_before)
+        # A genuinely new observation may establish a new candidate after expiry.
+        self.observe(3)
+        self.expect(self.page.locator('#contact-select')).to_have_value('fixture-0')
+
+    def test_binding_response_cannot_extend_an_already_expired_observation(self):
+        self.page.add_init_script("""
+            window.syntheticMonotonic=0;
+            Object.defineProperty(performance,'now',{value:()=>window.syntheticMonotonic});
+        """)
+        self.open(native='auto')
+        self.hold_binding = True
+        self.observe(2)
+        self.page.wait_for_timeout(100)
+        self.assertIsNotNone(self.pending_binding)
+        self.page.evaluate('window.syntheticMonotonic=9500')
+        self.hold_binding = False
+        self.reply(*self.pending_binding)
+        self.expect(self.page.locator('#recognition-status')).to_contain_text('过期')
+        self.expect(self.page.locator('#contact-select')).to_have_value('')
+        self.expect(self.page.locator('#prepare-preview')).to_be_disabled()
+
+    def test_observation_expiring_in_queue_is_sent_only_as_unavailable(self):
+        self.page.add_init_script("""
+            window.syntheticMonotonic=0;
+            Object.defineProperty(performance,'now',{value:()=>window.syntheticMonotonic});
+        """)
+        self.open(native='auto')
+        self.hold_binding = True
+        self.observe(2)
+        self.page.wait_for_timeout(100)
+        self.assertIsNotNone(self.pending_binding)
+        self.observe(3, '合成云舟')
+        self.page.evaluate('window.syntheticMonotonic=9500')
+        self.hold_binding = False
+        self.reply(*self.pending_binding)
+        self.expect(self.page.locator('#recognition-status')).to_contain_text('过期')
+        self.expect(self.page.locator('#contact-select')).to_have_value('')
+        self.assertFalse(any(body.get('title') == '合成云舟' for path, body in self.writes
+                             if path.endswith('/binding')))
+
+    def test_new_observation_reconnects_after_server_binding_session_is_lost(self):
+        self.open(native='auto')
+        self.observe(2)
+        self.expect(self.page.locator('#contact-select')).to_have_value('fixture-0')
+        previous_session = self.binding_session
+        # A service restart loses all volatile binding sessions.
+        self.binding_session = None
+        self.observe(3)
+        self.expect(self.page.locator('#contact-select')).to_have_value('')
+        self.expect(self.page.locator('#recognition-status')).to_contain_text('连接暂不可用')
+        self.observe(4)
+        self.expect(self.page.locator('#contact-select')).to_have_value('fixture-0')
+        self.assertNotEqual(previous_session, self.binding_session)
+        self.assertEqual(self.binding_session_counter, 2)
+        latest = [body for path, body in self.writes if path.endswith('/binding')][-1]
+        self.assertEqual(latest['seq'], 1)
+        self.assertFalse(any(path.endswith(('/preview', '/run')) for path, _ in self.writes))

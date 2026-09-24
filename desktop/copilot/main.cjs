@@ -1,12 +1,15 @@
 'use strict';
-// This process controls only its own windows. The helper reads geometry only.
-const {app,BrowserWindow,Menu,Tray,nativeImage,ipcMain,screen,shell,session,clipboard}=require('electron');
+// Controls only its own windows; optional OCR reads a user-calibrated header patch.
+const {app,BrowserWindow,Menu,Tray,nativeImage,ipcMain,screen,shell,session,clipboard,globalShortcut}=require('electron');
 const {spawn}=require('node:child_process');
 const fs=require('node:fs');
 const path=require('node:path');
 const {launchOptions,trustedSender,windowCommand,allowedResource}=require('./security.cjs');
 const {trayBitmap}=require('./icon.cjs');
 const {WindowController}=require('./window-controller.cjs');
+const {TitleObserver,validCalibration}=require('./title-observer.cjs');
+const {TitleReader}=require('./title-reader.cjs');
+const {TitleCalibration}=require('./title-calibration.cjs');
 
 const root=path.resolve(__dirname,'../..');
 let options;
@@ -20,7 +23,43 @@ if(!lock)app.quit();
 
 let win,tray,controller,watcher,tickTimer,pageReady=false,quitting=false,editMode=false;
 let dragTimer;
+let titleObserver,titleReader,titleCalibration,titleTimer,recognitionEnabled=true;
 const safeSend=state=>{if(win&&!win.isDestroyed()&&pageReady)win.webContents.send('copilot:state',state)};
+const sendConversation=state=>{if(win&&!win.isDestroyed()&&pageReady)win.webContents.send('copilot:conversation',state)};
+function titleTarget(){
+  const frame=controller?.frame;
+  if(!pageReady||controller.paused||frame?.state!=='bound'||!frame.visible||frame.minimized
+    ||(!frame.foreground&&frame.foreground_pid!==process.pid))return null;
+  return {id:frame.target,...screen.screenToDipRect(null,frame.rect)};
+}
+function sampleTitle(fresh=false){
+  if(!titleObserver)return Promise.resolve(null);
+  if(titleCalibration?.active)return Promise.resolve(titleObserver.snapshot());
+  if(!recognitionEnabled||!titleTarget()){
+    titleReader.stop(controller?.paused?'TITLE_PAUSED':'TITLE_INACTIVE');return Promise.resolve(titleObserver.snapshot());
+  }
+  return fresh?titleReader.refresh():titleReader.sample();
+}
+function setupTitleReader(){
+  titleObserver=new TitleObserver({onState:sendConversation});
+  titleReader=new TitleReader({root,parentPid:process.pid,observer:titleObserver});
+  const regionFile=path.join(root,'data','private','copilot','header-region.json');
+  try{
+    const stat=fs.lstatSync(regionFile);
+    if(stat.isSymbolicLink()||stat.size>1024)throw new Error('invalid');
+    const saved=JSON.parse(fs.readFileSync(regionFile,'utf8'));
+    if(saved.profile==='wechat-4.1.13'&&validCalibration(saved.region))titleReader.setRegion(saved.region);
+  }catch{/* Missing or invalid numeric-only preferences require user calibration. */}
+  titleCalibration=new TitleCalibration({shortcuts:globalShortcut,target:titleTarget,cursor:()=>screen.getCursorScreenPoint(),
+    notify:code=>titleReader.stop(code),save:region=>{
+      fs.mkdirSync(path.dirname(regionFile),{recursive:true});
+      if(fs.existsSync(regionFile)&&fs.lstatSync(regionFile).isSymbolicLink())throw new Error('invalid');
+      const temp=regionFile+'.'+require('node:crypto').randomUUID()+'.tmp';
+      fs.writeFileSync(temp,JSON.stringify({profile:'wechat-4.1.13',region}),{flag:'wx'});
+      fs.renameSync(temp,regionFile);titleReader.setRegion(region);
+    }});
+  titleTimer=setInterval(()=>{titleObserver.tick();sampleTitle().catch(()=>titleReader.stop('TITLE_READER_UNAVAILABLE'))},1000);
+}
 
 function stopWatcher(){
   const child=watcher;watcher=null;
@@ -51,6 +90,7 @@ function startWatcher(){
   child.on('exit',()=>{if(watcher===child){watcher=null;controller.fail('WINDOW_WATCH_STOPPED')}});
 }
 function pause(value){
+  if(value){if(titleCalibration?.active)titleCalibration.cancel('TITLE_PAUSED');titleReader?.stop('TITLE_PAUSED')}
   controller.pause(value);
   if(value)stopWatcher();else startWatcher();
   buildMenu();
@@ -74,7 +114,7 @@ async function loadPage(){
   try{
     await win.loadURL(options.url);
     if(win.webContents.getURL()!==options.url)throw new Error('UNTRUSTED_PAGE');
-    pageReady=true;safeSend(controller.snapshot());controller.render();
+    pageReady=true;safeSend(controller.snapshot());if(titleObserver)sendConversation(titleObserver.snapshot());controller.render();
   }
   catch{pageReady=false;win.hide();tray?.setToolTip('对话副驾：本机控制台未就绪，可从菜单重新连接')}
 }
@@ -102,6 +142,7 @@ function create(){
     ownPid:process.pid,ready:()=>pageReady,toDip:r=>screen.screenToDipRect(null,r),
     workArea:r=>screen.getDisplayMatching(r).workArea,onState:safeSend
   });
+  setupTitleReader();
   win.on('blur',()=>{if(editMode){editMode=false;win.setFocusable(false)}});
   win.on('moved',()=>{
     clearTimeout(dragTimer);dragTimer=setTimeout(()=>{
@@ -114,6 +155,14 @@ function create(){
   ipcMain.handle('copilot:command',(event,command,value)=>{
     if(!trustedSender(event,win.webContents,options.url))throw new Error('COPILOT_UNTRUSTED_FRAME');
     windowCommand(command,value);
+    if(command==='conversationState')return titleObserver.snapshot();
+    if(command==='refreshConversation')return sampleTitle(true);
+    if(command==='calibrateTitle'){titleCalibration.toggle();return titleObserver.snapshot()}
+    if(command==='recognition'){
+      recognitionEnabled=value;
+      if(!value){if(titleCalibration.active)titleCalibration.cancel();titleReader.stop('TITLE_MANUAL')}
+      return titleObserver.snapshot();
+    }
     if(command==='mode'){controller.setMode(value);buildMenu()}
     if(command==='size')controller.setSize(value);
     if(command==='pause')pause(value);
@@ -123,7 +172,7 @@ function create(){
     return controller.snapshot();
   });
   tray=new Tray(nativeImage.createFromBitmap(trayBitmap(),{width:32,height:32}));
-  tray.setToolTip('对话副驾 · 仅窗口伴随，不自动读取或发送消息');
+  tray.setToolTip('对话副驾 · 本机标题识别，不读取正文或发送消息');
   tray.on('double-click',()=>shell.openExternal(options.url));
   buildMenu();
   screen.on('display-metrics-changed',()=>controller.render());
@@ -132,6 +181,6 @@ function create(){
   loadPage().then(startWatcher);
 }
 app.on('second-instance',()=>{}); // An accidental second launch must not steal focus.
-app.on('before-quit',()=>{quitting=true;clearInterval(tickTimer);clearTimeout(dragTimer);stopWatcher();tray?.destroy()});
+app.on('before-quit',()=>{quitting=true;clearInterval(tickTimer);clearInterval(titleTimer);clearTimeout(dragTimer);if(titleCalibration?.active)titleCalibration.cancel();titleReader?.stop();stopWatcher();tray?.destroy()});
 app.on('window-all-closed',()=>app.quit());
 if(lock)app.whenReady().then(create).catch(()=>{console.error('COPILOT_START_FAILED');app.exit(1)});

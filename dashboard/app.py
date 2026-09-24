@@ -1203,6 +1203,12 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 return self._json(library_service().update_tag(request))
             if path == "/api/modules":
                 return self._json(module_registry().update(request))
+            if path == "/api/copilot/binding/start":
+                module_registry().require('copilot')
+                return self._json(copilot.binding_start(DATA_DIR, _library_contacts(), request))
+            if path == "/api/copilot/binding":
+                module_registry().require('copilot')
+                return self._json(copilot.binding_observe(DATA_DIR, _library_contacts(), request))
             if path == "/api/copilot/preview":
                 return self._json(copilot.preview(DATA_DIR, _library_contacts(), request, admission=_copilot_admission))
             if path == "/api/copilot/run":

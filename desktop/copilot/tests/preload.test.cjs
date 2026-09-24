@@ -11,3 +11,13 @@ test('native copy requires transient user activation before any IPC',async()=>{
  assert.equal(calls.length,1);assert.deepEqual(calls[0],['copilot:command','copy','synthetic']);
  assert.equal(bridge.readClipboard,undefined);
 });
+test('conversation bridge is read-only and calibration requires activation',async()=>{
+ let bridge;const calls=[],listeners=new Map();const navigator={userActivation:{isActive:false}};
+ const electron={contextBridge:{exposeInMainWorld:(_name,value)=>{bridge=value}},ipcRenderer:{invoke:(...args)=>{calls.push(args);return Promise.resolve({})},on:(name,fn)=>listeners.set(name,fn),removeListener:name=>listeners.delete(name)}};
+ vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../preload.cjs'),'utf8'),{navigator,require:()=>electron});
+ assert.equal(typeof bridge.conversationState,'function');assert.equal(typeof bridge.refreshConversation,'function');
+ await assert.rejects(bridge.calibrateTitle(),/USER_GESTURE_REQUIRED/);assert.equal(calls.length,0);
+ navigator.userActivation.isActive=true;await bridge.calibrateTitle();assert.equal(calls[0][1],'calibrateTitle');
+ let observed;const unsubscribe=bridge.onConversation(value=>observed=value);listeners.get('copilot:conversation')({}, {seq:1});assert.equal(observed.seq,1);unsubscribe();assert.equal(listeners.size,0);
+ assert.equal(bridge.captureScreen,undefined);assert.equal(bridge.setTitle,undefined);
+});

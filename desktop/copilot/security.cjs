@@ -12,9 +12,9 @@ function trustedSender(event,contents,url) {
 function windowCommand(command,value) {
   const valid=(command==='mode'&&['dock','float'].includes(value))
     ||(command==='size'&&['expanded','compact','bubble'].includes(value))
-    ||(['pause','edit'].includes(command)&&typeof value==='boolean')
+    ||(['pause','edit','recognition'].includes(command)&&typeof value==='boolean')
     ||(command==='copy'&&typeof value==='string'&&value.length>0&&Array.from(value).length<=800&&!/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/.test(value))
-    ||(['close','state'].includes(command)&&value===undefined);
+    ||(['close','state','conversationState','refreshConversation','calibrateTitle'].includes(command)&&value===undefined);
   if(!valid)throw new TypeError('Invalid native command');
   return {command,value};
 }

@@ -9,9 +9,11 @@ const {_electron}=require(path.join(root,'.venv','Lib','site-packages','playwrig
 const runtime=path.join(root,'desktop','copilot','node_modules','electron','dist','electron.exe');
 const fixture=fs.mkdtempSync(path.join(root,'scripts','tmp','copilot-app-'));
 const fixtureApp=path.join(fixture,'desktop','copilot');fs.mkdirSync(fixtureApp,{recursive:true});
-for(const name of ['package.json','main.cjs','preload.cjs','security.cjs','icon.cjs','placement.cjs','window-controller.cjs'])fs.copyFileSync(path.join(root,'desktop','copilot',name),path.join(fixtureApp,name));
+for(const name of ['package.json','main.cjs','preload.cjs','security.cjs','icon.cjs','placement.cjs','window-controller.cjs','title-observer.cjs','title-reader.cjs','title-calibration.cjs'])fs.copyFileSync(path.join(root,'desktop','copilot',name),path.join(fixtureApp,name));
 fs.copyFileSync(path.join(__dirname,'fixture-bootstrap.cjs'),path.join(fixtureApp,'fixture-bootstrap.cjs'));
-let calls=0,enabled=false,preview;
+let calls=0,enabled=false,preview,bindingTitle='',bindingGeneration=0,bindingToken='',bindingSeq=0;
+const people=[{bundle_id:'synthetic-person',contact_display:'合成青禾',date_from:'2026-09-01',date_to:'2026-09-24',message_count:20},
+ {bundle_id:'synthetic-other',contact_display:'合成白鹭',date_from:'2026-09-01',date_to:'2026-09-24',message_count:20}];
 const server=http.createServer(async(req,res)=>{
  const pathname=new URL(req.url,'http://localhost').pathname;
  const json=value=>{res.setHeader('Content-Type','application/json');res.end(JSON.stringify(value))};
@@ -21,14 +23,25 @@ const server=http.createServer(async(req,res)=>{
   if(req.method==='POST')enabled=request.enabled===true;
   return json({status:'ok',modules:[{id:'analysis',enabled:true,version:0},{id:'copilot',enabled,version:enabled?1:0}]});
  }
- if(pathname==='/api/copilot/status')return json({status:'ok',enabled,configured:true,provider:'synthetic',model:'synthetic',capabilities:{live_capture:false,auto_send:false},conversations:[{bundle_id:'synthetic-person',contact_display:'合成青禾',date_from:'2026-09-01',date_to:'2026-09-24',message_count:20}]});
+ if(pathname==='/api/copilot/status')return json({status:'ok',enabled,configured:true,provider:'synthetic',model:'synthetic',capabilities:{live_capture:false,auto_send:false},conversations:people});
+ if(pathname==='/api/copilot/binding/start'){bindingTitle='';return json({status:'ok',session_id:'b'.repeat(48)})}
+ if(pathname==='/api/copilot/binding'){
+  bindingSeq=request.seq;
+  const title=request.state==='observed'?request.title:'';
+  if(title!==bindingTitle){bindingTitle=title;bindingToken=(++bindingGeneration).toString(16).padStart(48,'0')}
+  const person=people.find(item=>item.contact_display===title);
+  return json({state:person?'suggested':'unavailable',account_verified:false,observation_seq:bindingSeq,
+   ...(person?{bundle_id:person.bundle_id,binding_token:bindingToken}:{})});
+ }
  if(pathname==='/api/copilot/preview'){
   preview={status:'ok',preview_id:'a'.repeat(48),binding_revision:request.binding_revision,scope:request,max_calls:1,
    recipient:{configured:true,provider:'synthetic',model:'synthetic',endpoint:'https://example.invalid'},
-   counts:{sample_messages:20,sample_chars:200,draft_chars:0,sample_date_from:'2026-09-01',sample_date_to:'2026-09-24',omitted_messages:0,truncated_messages:0},privacy_notices:[]};
+   counts:{sample_messages:20,sample_chars:200,draft_chars:0,sample_date_from:'2026-09-01',sample_date_to:'2026-09-24',omitted_messages:0,truncated_messages:0},privacy_notices:[],
+   ...(request.binding_token?{binding_required:true,account_verified:false,observation_seq:bindingSeq}:{})};
   return json(preview);
  }
  if(pathname==='/api/copilot/run'){
+  if(preview.binding_required)assert.equal(request.binding_confirmed,true);
   calls++;return json({status:'ok',binding_revision:request.binding_revision,replies:['natural','warm','invite'].map(style=>({style,text:'合成建议，仅用于测试。',reason:'合成理由'})),topics:[],caveats:[]});
  }
  const allowed={'/copilot/index.html':'text/html','/copilot/copilot.js':'text/javascript','/copilot/copilot.css':'text/css'};
@@ -54,6 +67,9 @@ const server=http.createServer(async(req,res)=>{
   });
   await page.locator('#expand-window').click();
   await page.locator('#enable-copilot').click();
+  assert.equal(await page.locator('#context-mode').inputValue(),'auto');
+  assert.equal(await app.evaluate(()=>globalThis.__fixtureCaptures),0);checked.push('no-title-capture-before-calibration');
+  await page.locator('#context-mode').selectOption('manual');
   await page.locator('#context-settings').evaluate(node=>{node.open=true});
   await page.locator('#contact-select').selectOption('synthetic-person');
   await page.locator('#prepare-preview').click();
@@ -62,6 +78,26 @@ const server=http.createServer(async(req,res)=>{
   await page.locator('.reply-card').first().waitFor();assert.equal(calls,1);checked.push('one-explicit-synthetic-call');
   await page.locator('.reply-card .copy-button').first().click();
   assert.equal(await app.evaluate(()=>globalThis.__syntheticCopy),'合成建议，仅用于测试。');checked.push('gesture-only-copy-bridge');
+  await page.locator('#context-mode').selectOption('auto');
+  await page.locator('#calibrate-title').click();
+  await app.evaluate(()=>globalThis.__fixtureMark(100,40));
+  await app.evaluate(()=>globalThis.__fixtureMark(340,72));
+  await page.waitForFunction(()=>document.querySelector('#contact-select').value==='synthetic-person');
+  assert.equal(calls,1);checked.push('calibrated-local-auto-candidate-no-cloud');
+  const numeric=JSON.parse(fs.readFileSync(path.join(fixture,'data','private','copilot','header-region.json'),'utf8'));
+  assert.deepEqual(numeric,{profile:'wechat-4.1.13',region:{x:100,y:40,width:240,height:32}});checked.push('numeric-only-calibration-preferences');
+  await page.locator('#prepare-preview').click();
+  await page.locator('#binding-confirmation').waitFor({state:'visible'});
+  assert.equal(await page.locator('#binding-confirmed').isChecked(),false);
+  assert.equal(await page.locator('#confirm-run').isDisabled(),true);
+  await page.locator('#binding-confirmed').check();
+  await page.locator('#confirm-run').click();
+  await page.locator('.reply-card').first().waitFor();assert.equal(calls,2);checked.push('fresh-title-and-explicit-identity-confirmation');
+  await page.locator('#latest-draft').fill('合成补充');
+  await app.evaluate(()=>{globalThis.__fixtureTitle='合成白鹭'});
+  await page.waitForFunction(()=>document.querySelector('#contact-select').value==='synthetic-other');
+  assert.equal(await page.locator('#latest-draft').inputValue(),'');
+  assert.equal(await page.locator('.reply-card').count(),0);assert.equal(calls,2);checked.push('same-window-contact-change-clears-context');
   await page.screenshot({path:path.join(root,'scripts','tmp','copilot-desktop-synthetic.png')});
   assert.equal(await page.evaluate(async()=>{try{await fetch('https://example.invalid');return false}catch{return true}}),true);checked.push('external-network-blocked');
   console.log(JSON.stringify({status:'passed',count:checked.length,checks:checked,real_wechat_accessed:false,real_clipboard_modified:false,real_cloud_calls:0}));

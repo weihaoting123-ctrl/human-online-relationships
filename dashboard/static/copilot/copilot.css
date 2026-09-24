@@ -44,6 +44,11 @@ body[data-native="true"] button, body[data-native="true"] input, body[data-nativ
 .native-controls { margin: 12px 0; }
 .native-controls select { width: auto; flex: 1; font-size: 12px; }
 .capability-note { font-size: 11px; color: var(--muted); margin: 0 0 14px; }
+.recognition-controls { margin: 12px 0; }
+.recognition-controls .capability-note { margin: 8px 0; }
+.recognition-controls .field-note { margin-bottom: 12px; }
+.binding-confirmation { display: flex; align-items: flex-start; gap: 9px; margin: 14px 0 0; font-weight: 500; }
+.binding-confirmation input { flex: 0 0 18px; width: 18px; height: 18px; min-height: 18px; margin: 2px 0 0; accent-color: var(--green); }
 .context-card, .consent-card, .reply-card, .topic-card { background: var(--white); border: 1px solid var(--line); border-radius: 17px; padding: 15px; }
 .context-card { border-top: 3px solid var(--green); }
 .eyebrow { font-size: 11px; font-weight: 650; color: var(--muted); }
