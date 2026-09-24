@@ -6,7 +6,9 @@ import shutil
 import sqlite3
 import sys
 import tempfile
+import threading
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest import mock
 
@@ -460,6 +462,101 @@ class WeChatBackupTests(unittest.TestCase):
             result = self.run_backup()
         self.assertEqual(result["state"], "busy", result)
         self.assertEqual(path.read_bytes(), initial)
+
+    def test_status_read_during_verify_completion_uses_the_published_terminal_state(self):
+        self.assertEqual(self.run_backup()['state'], 'completed')
+        hash_started, release_hash = threading.Event(), threading.Event()
+        running_read, verify_finished = threading.Event(), threading.Event()
+        original_hash, original_read = backup._hash_file, backup._read_status
+
+        def blocked_hash(path):
+            hash_started.set()
+            if not release_hash.wait(3):
+                raise AssertionError('synthetic verifier was not released')
+            return original_hash(path)
+
+        def stale_read(path):
+            result = original_read(path)
+            if result['state'] == 'running' and not running_read.is_set():
+                running_read.set()
+                if not verify_finished.wait(3):
+                    raise AssertionError('synthetic verify did not publish its completed state')
+            return result
+
+        def verify():
+            try:
+                return backup.verify_backup(self.root)
+            finally:
+                verify_finished.set()
+
+        with mock.patch.object(backup, '_hash_file', side_effect=blocked_hash), \
+                mock.patch.object(backup, '_read_status', side_effect=stale_read), ThreadPoolExecutor(2) as pool:
+            worker = pool.submit(verify)
+            try:
+                self.assertTrue(hash_started.wait(3))
+                reader = pool.submit(backup.get_status, self.root)
+                self.assertTrue(running_read.wait(3))
+            finally:
+                release_hash.set()
+            completed = worker.result(timeout=3)
+            observed = reader.result(timeout=3)
+        self.assertEqual(completed['state'], 'completed', completed)
+        self.assertEqual(observed['state'], 'completed', observed)
+        self.assertEqual(observed['counts']['verified'], 1)
+        self.assertTrue(observed['verification_complete'])
+        self.assertEqual(observed['verified_at'], completed['verified_at'])
+
+    def test_orphaned_running_status_is_interrupted_without_rewriting_history(self):
+        status_path = self.root / 'data/private/wechat-backup/status.json'
+        backup._atomic_json(status_path, {**backup._empty_status(), 'state': 'running'})
+        before = status_path.read_bytes()
+        result = backup.get_status(self.root)
+        self.assertEqual(result['state'], 'failed')
+        self.assertEqual(result['error_code'], 'INTERRUPTED')
+        self.assertEqual(status_path.read_bytes(), before)
+
+    def test_running_owner_status_remains_running_without_rewriting_it(self):
+        status_path = self.root / 'data/private/wechat-backup/status.json'
+        backup._atomic_json(status_path, {**backup._empty_status(), 'state': 'running'})
+        before = status_path.read_bytes()
+        with backup._lock(self.destination):
+            self.assertEqual(backup.get_status(self.root)['state'], 'running')
+        self.assertEqual(status_path.read_bytes(), before)
+
+    def test_status_read_and_publication_do_not_overlap_open_handles(self):
+        status_path = self.root / 'data/private/wechat-backup/status.json'
+        backup._atomic_json(status_path, {**backup._empty_status(), 'state': 'running'})
+        opened, release_reader, published = threading.Event(), threading.Event(), threading.Event()
+        original_read = Path.read_text
+
+        def held_read(path, *args, **kwargs):
+            if path != status_path:
+                return original_read(path, *args, **kwargs)
+            with path.open('r', encoding='utf-8') as handle:
+                opened.set()
+                if not release_reader.wait(3):
+                    raise AssertionError('synthetic status reader was not released')
+                return handle.read()
+
+        def publish():
+            try:
+                backup._atomic_json(status_path, {**backup._empty_status(), 'state': 'completed'})
+            finally:
+                published.set()
+
+        with mock.patch.object(Path, 'read_text', held_read), ThreadPoolExecutor(2) as pool:
+            reader = pool.submit(backup._read_status, status_path)
+            try:
+                self.assertTrue(opened.wait(3))
+                writer = pool.submit(publish)
+                # This interval tests blocking itself: replacement must remain
+                # pending while the deliberately held read handle is open.
+                self.assertFalse(published.wait(0.15), 'publication overlapped a live status read handle')
+            finally:
+                release_reader.set()
+            self.assertEqual(reader.result(timeout=3)['state'], 'running')
+            writer.result(timeout=3)
+        self.assertEqual(backup.get_status(self.root)['state'], 'completed')
 
     def test_restore_rejects_existing_directory_and_path_traversal(self):
         self.run_backup()

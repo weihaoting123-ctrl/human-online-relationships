@@ -101,8 +101,13 @@ class AnalysisChartProbeTests(unittest.TestCase):
         row.scroll_into_view_if_needed()
         # Scrolling intentionally dismisses a probe. Finish the fixture's
         # programmatic scroll before the next physical pointer interaction.
-        self.page.evaluate('() => new Promise(requestAnimationFrame)')
-        row.hover()
+        self.page.evaluate('() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))')
+        # The readable tooltip may legitimately cover this track. Move the
+        # physical pointer rather than waiting for Playwright's hit-test to
+        # remove the very tooltip whose pointer forwarding is under test.
+        box = row.bounding_box()
+        self.assertIsNotNone(box)
+        self.page.mouse.move(box['x'] + box['width'] / 2, box['y'] + box['height'] / 2)
 
     def tooltip(self, title, rows):
         tooltip = self.page.locator('.chart-probe-tooltip:visible')

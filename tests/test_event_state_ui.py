@@ -74,6 +74,18 @@ class EventStateBrowserTests(unittest.TestCase):
         self.current_scope = {'bundle_id': 'fixture_000', 'date_from': '2026-01-01',
                               'date_to': '2026-09-01', 'focus': 'communication'}
         self.open_ai()
+        # A history click starts an asynchronous read. Keep that boundary
+        # observable even on fast machines; no external request is introduced.
+        self.page.evaluate("""() => {
+            const fetch = window.fetch.bind(window);
+            window.fetch = async (...args) => {
+                const response = await fetch(...args);
+                if (String(args[0]).startsWith('/api/ai/reports/')) {
+                    await new Promise(resolve => setTimeout(resolve, 75));
+                }
+                return response;
+            };
+        }""")
         invalid_fields = [
             'timeline.events[0].event_state' + fixtures.XSS,
             'timeline.events[0].event_state.__proto__',
@@ -81,16 +93,20 @@ class EventStateBrowserTests(unittest.TestCase):
             'timeline.events[1200].event_state',
             'timeline.events[-1].event_state',
         ]
-        for field in invalid_fields:
+        for index, field in enumerate(invalid_fields):
             with self.subTest(field=field):
+                reason_text = f'本地合成错误 {index}'
                 self.report_overrides = {
-                    'stop_reason': '本地合成错误',
+                    'stop_reason': reason_text,
                     'error_detail': {'code': 'OUTPUT_ENUM', 'field': field,
                                      'message': fixtures.XSS, 'phase': 'merge', 'call_index': 4},
                 }
                 self.page.locator('#ai-history-list .history-item').click()
+                # Wait for this response, not an empty node or the previous
+                # iteration's reason. Click auto-wait does not await fetch.
+                self.expect(self.page.locator('#ai-result-stop-reason')).to_contain_text(reason_text)
                 reason = self.page.locator('#ai-result-stop-reason').inner_text()
-                self.assertIn('本地合成错误', reason)
+                self.assertIn(reason_text, reason)
                 self.assertNotIn('第 4 次计划调用', reason)
                 self.assertNotIn(field, reason)
                 self.assertEqual(self.page.locator('#ai-result img, #ai-result script').count(), 0)

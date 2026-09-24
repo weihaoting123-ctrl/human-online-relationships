@@ -22,6 +22,7 @@ class Module:
     label: str
     description: str
     requires: tuple[str, ...] = ()
+    default_enabled: bool = True
 
 
 DEFINITIONS = (
@@ -30,6 +31,7 @@ DEFINITIONS = (
     Module('voice', '语音与转写', '本机语音归档、播放与转写；依赖媒体模块。', ('media',)),
     Module('sync', '同步与导入', '允许定时增量读取和手动文件导入；关闭后不再启动新同步。'),
     Module('backup', '自动与手动备份', '允许创建增量快照；关闭后已有快照、核验与恢复工具仍可用。'),
+    Module('copilot', '桌面聊天助手', '选定归档范围后逐次确认生成回复建议；不会自动发送消息。', default_enabled=False),
 )
 _BY_ID = {item.id: item for item in DEFINITIONS}
 
@@ -44,7 +46,7 @@ class ModuleRegistry:
             raise RuntimeError('本机模块设置不可用，请检查管理数据库')
         settings = {}
         for definition in DEFINITIONS:
-            value = raw.get(definition.id, {'enabled': True, 'version': 0})
+            value = raw.get(definition.id, {'enabled': definition.default_enabled, 'version': 0})
             if (not isinstance(value, dict) or type(value.get('enabled')) is not bool
                     or type(value.get('version')) is not int or value['version'] < 0):
                 raise RuntimeError('本机模块设置不可用，请检查管理数据库')

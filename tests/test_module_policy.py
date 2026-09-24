@@ -27,10 +27,13 @@ class ModulePolicyTests(unittest.TestCase):
         self.store = MemorySettings()
         self.registry = ModuleRegistry(self.store)
 
-    def test_all_optional_modules_default_enabled(self):
+    def test_existing_modules_stay_enabled_and_copilot_defaults_off(self):
         payload = self.registry.snapshot()
-        self.assertEqual({m['id'] for m in payload['modules']}, {'analysis','media','voice','sync','backup'})
-        self.assertTrue(all(m['enabled'] and m['version'] == 0 for m in payload['modules']))
+        self.assertEqual({m['id'] for m in payload['modules']}, {'analysis','media','voice','sync','backup','copilot'})
+        self.assertTrue(all(m['enabled'] and m['version'] == 0 for m in payload['modules'] if m['id'] != 'copilot'))
+        self.assertFalse(next(m for m in payload['modules'] if m['id'] == 'copilot')['enabled'])
+        with self.assertRaises(ModuleDisabledError):
+            self.registry.require('copilot')
 
     def test_dependencies_are_explicit_and_disable_is_not_cascading(self):
         with self.assertRaises(ModulePolicyError):

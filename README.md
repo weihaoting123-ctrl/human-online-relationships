@@ -91,6 +91,7 @@ node --test tests/test_catalog.cjs
 ## 项目与迭代管理
 
 - 当前公开基线版本由 [VERSION](VERSION) 管理，变更记录见 [CHANGELOG](CHANGELOG.md)。
+- Windows 对话副驾候选已加入：[安装、无感窗口行为与隐私边界](docs/copilot.md)。支持吸附/悬浮和按次确认的归档回复建议，**尚不是实时聊天读取器**；`1.0.0-rc.1` 不代表正式 1.0 发布。
 - 功能边界与后续迭代见 [ROADMAP](ROADMAP.md)，提交、PR、标签与里程碑约定见 [CONTRIBUTING](CONTRIBUTING.md)。
 - 深度解构、模块边界及真实平台限制见 [项目审查](docs/project-decomposition.md)；分批需求、依赖与验收见 [需求池](BACKLOG.md)。候选版本需确认并实现，不等于已经发布。
 - Issues 使用问题/功能模板；按 `type:*`、`area:*`、`priority:*` 分类。未完成的想法不得写成已实现功能。

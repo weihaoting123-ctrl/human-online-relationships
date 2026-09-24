@@ -18,6 +18,7 @@ import sqlite3
 import stat
 import sys
 import tempfile
+import threading
 import time
 import uuid
 from contextlib import ExitStack, contextmanager
@@ -52,6 +53,10 @@ COUNT_KEYS = ("files", "bytes", "objects_copied", "bytes_copied", "unchanged",
               "sqlite_snapshots", "skipped", "verified", "processed", "errors")
 CATEGORIES = ("text", "voice", "images", "other")
 SQLITE_MAGIC = b"SQLite format 3\x00"
+# Windows does not allow replacing a file while a normal Python read handle is
+# open. Coordinate this process's status polls with its short publish step.
+# Never hold this lock while trying to acquire the cross-process backup lock.
+_STATUS_IO_LOCK = threading.RLock()
 LIVE_SQLITE = {
     "data/private/wechat-archive/catalog.sqlite3",
     "data/private/wechat-voice/catalog.sqlite3",
@@ -241,7 +246,8 @@ def _atomic_json(path, value):
             output.flush()
             os.fsync(output.fileno())
         _safe_chain(path, destination=True)
-        os.replace(temp, path)
+        with _STATUS_IO_LOCK:
+            os.replace(temp, path)
         _sync_dir(path.parent)
     finally:
         temp.unlink(missing_ok=True)
@@ -345,7 +351,9 @@ def _read_status(path):
         return _empty_status()
     _safe_chain(path, destination=True)
     try:
-        return _public_status(json.loads(path.read_text(encoding="utf-8")))
+        with _STATUS_IO_LOCK:
+            payload = path.read_text(encoding="utf-8")
+        return _public_status(json.loads(payload))
     except (ValueError, OSError):
         return _empty_status()
 
@@ -357,7 +365,12 @@ def get_status(project_root=REPO):
         if result["state"] == "running":
             try:
                 with _lock(backup):
-                    result.update(state="failed", error_code="INTERRUPTED")
+                    # The owner may have published its terminal status and
+                    # released the lock after our first read. Decide whether
+                    # work was interrupted only from the current locked view.
+                    result = _read_status(status_path)
+                    if result["state"] == "running":
+                        result.update(state="failed", error_code="INTERRUPTED")
             except BackupError as error:
                 if error.code != "BUSY":
                     raise
