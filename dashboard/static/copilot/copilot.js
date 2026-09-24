@@ -129,7 +129,7 @@
     renderControls();
   }
   const titleReasons = {
-    TITLE_CALIBRATION_REQUIRED: '首次使用请标记微信标题区域，随后切换聊天会自动识别。',
+    TITLE_CALIBRATION_REQUIRED: '首次使用或升级后，请自动校准或标记微信标题区域，随后切换聊天会自动识别。',
     TITLE_MARK_TOP_LEFT: '将鼠标移到标题左上角，按 Ctrl+Alt+F8；请留少量空白。',
     TITLE_MARK_BOTTOM_RIGHT: '将鼠标移到标题右下角，按 Ctrl+Alt+F8 完成；请留少量空白。',
     TITLE_STABILIZING: '会话标题正在变化，等待稳定后再建议归档。',
@@ -138,6 +138,8 @@
     TITLE_AUTO_CALIBRATING: '正在本机定位标题条，请保持微信前台且无遮挡…',
     TITLE_CALIBRATION_SAVED: '标题区域已保存，随后会连续检查识别结果。',
     TITLE_OCCLUDED: '标题条被遮挡或超出屏幕，未保存；请移开遮挡后再校准。',
+    TITLE_CAPTURE_UNAVAILABLE: '未能取得可用的标题像素，未保存；请保持微信可见后再校准，不会自动重试。',
+    TITLE_DPI_UNAVAILABLE: '无法核验屏幕缩放坐标，未保存；请重新打开助手后再校准，不会自动重试。',
     TITLE_WINDOW_UNAVAILABLE: '未找到唯一可用的前台微信窗口，请保持微信可见后再校准。',
     TITLE_TARGET_CHANGED: '校准期间窗口或前台发生变化，未保存；请保持窗口稳定后再试。',
     TITLE_AUTO_CALIBRATION_UNSTABLE: '两次标题检查不一致，未保存；请保持会话和窗口稳定。',

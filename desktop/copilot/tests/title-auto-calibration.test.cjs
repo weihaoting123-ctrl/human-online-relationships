@@ -31,3 +31,11 @@ test('extra protocol lines reject the entire calibration reply',async()=>{
  const f=fixture(),p=f.reader.calibrate();f.child.stdout.write(JSON.stringify({state:'calibrated',source:'local_ocr',target:'a'.repeat(64),region})+'\n{}\n');
  assert.equal((await p).state,'unavailable');assert.equal(f.reader.region,null);f.reader.stop();
 });
+test('calibration preserves fixed capture failure codes without exposing arbitrary errors',async()=>{
+ for(const reason of ['TITLE_DPI_UNAVAILABLE','TITLE_CAPTURE_UNAVAILABLE','private-synthetic-detail']){
+  const f=fixture(),p=f.reader.calibrate();
+  f.child.stdout.write(JSON.stringify({state:'unavailable',source:'local_ocr',reason})+'\n');
+  assert.equal((await p).reason,reason.startsWith('TITLE_')?reason:'TITLE_AUTO_FAILED');
+  assert.equal(f.reader.region,null);f.reader.stop();
+ }
+});

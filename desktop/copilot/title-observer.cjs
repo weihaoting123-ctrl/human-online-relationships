@@ -1,4 +1,5 @@
 'use strict';
+const REGION_PROFILE='wechat-4.1.13-visual-v2';
 class TitleObserver {
   constructor({clock=Date.now,onState=()=>{}}={}){
     this.clock=clock;this.onState=onState;this.pending='';this.lastSeen=0;
@@ -27,4 +28,9 @@ function validCalibration(roi){
     &&Object.values(roi).every(Number.isFinite)&&roi.x>=80&&roi.x<=1800&&roi.y>=4
     &&roi.width>=40&&roi.width<=480&&roi.height>=10&&roi.height<=48&&roi.y+roi.height<=130;
 }
-module.exports={TitleObserver,validCalibration};
+function storedCalibration(saved){
+  if(!saved||Object.keys(saved).sort().join(',')!=='profile,region'
+    ||saved.profile!==REGION_PROFILE||!validCalibration(saved.region))return null;
+  return {...saved.region};
+}
+module.exports={TitleObserver,validCalibration,storedCalibration,REGION_PROFILE};

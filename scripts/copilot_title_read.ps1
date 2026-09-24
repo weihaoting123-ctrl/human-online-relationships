@@ -159,7 +159,8 @@ function Invoke-HeaderRequest([string]$Line,[int]$AssistantPid) {
         if ($calibration) { $reason = 'TITLE_AUTO_CALIBRATION_UNAVAILABLE' }
         $errorCause = $_.Exception
         $allowed = @('TITLE_REQUEST_INVALID','TITLE_WINDOW_UNAVAILABLE','TITLE_AUTO_CALIBRATION_LAYOUT_UNSUPPORTED',
-            'TITLE_AUTO_CALIBRATION_UNREADABLE','TITLE_AUTO_CALIBRATION_UNSTABLE','TITLE_OCCLUDED')
+            'TITLE_AUTO_CALIBRATION_UNREADABLE','TITLE_AUTO_CALIBRATION_UNSTABLE','TITLE_OCCLUDED',
+            'TITLE_DPI_UNAVAILABLE','TITLE_CAPTURE_UNAVAILABLE')
         while ($null -ne $errorCause) {
             if ($allowed -ccontains $errorCause.Message) { $reason = $errorCause.Message; break }
             if ($calibration -and $errorCause.Message -ceq 'TITLE_TARGET_CHANGED') { $reason = 'TITLE_AUTO_CALIBRATION_UNSTABLE'; break }

@@ -12,6 +12,12 @@ const fixture=fs.mkdtempSync(path.join(root,'scripts','tmp','copilot-app-'));
 const fixtureApp=path.join(fixture,'desktop','copilot');fs.mkdirSync(fixtureApp,{recursive:true});
 for(const name of ['package.json','main.cjs','preload.cjs','security.cjs','icon.cjs','placement.cjs','window-controller.cjs','title-observer.cjs','title-reader.cjs','title-calibration.cjs','auto-calibration.cjs'])fs.copyFileSync(path.join(root,'desktop','copilot',name),path.join(fixtureApp,name));
 fs.copyFileSync(path.join(__dirname,'fixture-bootstrap.cjs'),path.join(fixtureApp,'fixture-bootstrap.cjs'));
+// Old automatic regions used invisible outer borders; never silently reinterpret
+// them as visual-frame offsets. Preserve the file until explicit recalibration.
+const legacyRegionFile=path.join(fixture,'data','private','copilot','header-region.json');
+fs.mkdirSync(path.dirname(legacyRegionFile),{recursive:true});
+const legacyRegion={profile:'wechat-4.1.13',region:{x:300,y:25,width:250,height:40}};
+fs.writeFileSync(legacyRegionFile,JSON.stringify(legacyRegion));
 let calls=0,enabled=false,preview,bindingTitle='',bindingGeneration=0,bindingToken='',bindingSeq=0,pageRequests=0;
 const people=[{bundle_id:'synthetic-person',contact_display:'合成青禾',date_from:'2026-09-01',date_to:'2026-09-24',message_count:20},
  {bundle_id:'synthetic-other',contact_display:'合成白鹭',date_from:'2026-09-01',date_to:'2026-09-24',message_count:20}];
@@ -79,6 +85,10 @@ const server=http.createServer(async(req,res)=>{
   await page.evaluate(()=>window.copilotDesktop.pause(false));
   await page.waitForFunction(()=>!window.__fixtureNativeState.paused&&window.__fixtureNativeState.target==='synthetic-window');
   native=await page.evaluate(()=>window.copilotDesktop.state());assert.equal(native.presentation,false);
+  await page.evaluate(()=>window.copilotDesktop.refreshConversation());
+  assert.equal(await app.evaluate(()=>globalThis.__fixtureCaptures),0);
+  assert.deepEqual(JSON.parse(fs.readFileSync(legacyRegionFile,'utf8')),legacyRegion);
+  checked.push('legacy-region-preserved-but-not-reused');
   assert.equal(await app.evaluate(()=>globalThis.__fixtureWatchStarts),1);assert.equal(calls,0);checked.push('explicit-resume-starts-guarded-follow-only');
   await relaunch([`--port=${server.address().port}`]);
   assert.equal((await page.evaluate(()=>window.copilotDesktop.state())).paused,false);checked.push('unflagged-second-instance-does-not-present');
@@ -114,14 +124,14 @@ const server=http.createServer(async(req,res)=>{
   await page.locator('#auto-calibrate-title').click();
   await page.waitForFunction(()=>document.querySelector('#auto-calibration-result').textContent.includes('已保存'));
   const autoNumeric=JSON.parse(fs.readFileSync(path.join(fixture,'data','private','copilot','header-region.json'),'utf8'));
-  assert.deepEqual(autoNumeric.region,{x:340,y:16,width:100,height:48});assert.equal(calls,1);checked.push('one-click-numeric-calibration-no-cloud');
+  assert.deepEqual(autoNumeric,{profile:'wechat-4.1.13-visual-v2',region:{x:340,y:16,width:100,height:48}});assert.equal(calls,1);checked.push('one-click-numeric-calibration-no-cloud');
   await page.locator('#calibrate-title').click();
   await app.evaluate(()=>globalThis.__fixtureMark(100,40));
   await app.evaluate(()=>globalThis.__fixtureMark(340,72));
   await page.waitForFunction(()=>document.querySelector('#contact-select').value==='synthetic-person');
   assert.equal(calls,1);checked.push('calibrated-local-auto-candidate-no-cloud');
   const numeric=JSON.parse(fs.readFileSync(path.join(fixture,'data','private','copilot','header-region.json'),'utf8'));
-  assert.deepEqual(numeric,{profile:'wechat-4.1.13',region:{x:100,y:40,width:240,height:32}});checked.push('numeric-only-calibration-preferences');
+  assert.deepEqual(numeric,{profile:'wechat-4.1.13-visual-v2',region:{x:100,y:40,width:240,height:32}});checked.push('numeric-only-calibration-preferences');
   await page.locator('#prepare-preview').click();
   await page.locator('#binding-confirmation').waitFor({state:'visible'});
   assert.equal(await page.locator('#binding-confirmed').isChecked(),false);

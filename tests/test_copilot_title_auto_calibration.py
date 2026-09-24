@@ -297,7 +297,8 @@ $response=Invoke-HeaderRequest '{"operation":"calibrate"}' 42
 if ($response.reason -cne 'TITLE_AUTO_CALIBRATION_UNAVAILABLE') { throw 'FAILURE_NOT_SAFE' }
 $json=$response | ConvertTo-Json -Compress
 if ($json -match 'SYNTHETIC|"title"|path|provider') { throw 'FAILURE_LEAK' }
-foreach ($reason in @('TITLE_OCCLUDED','TITLE_AUTO_CALIBRATION_LAYOUT_UNSUPPORTED','TITLE_AUTO_CALIBRATION_UNREADABLE')) {
+foreach ($reason in @('TITLE_OCCLUDED','TITLE_AUTO_CALIBRATION_LAYOUT_UNSUPPORTED','TITLE_AUTO_CALIBRATION_UNREADABLE',
+    'TITLE_DPI_UNAVAILABLE','TITLE_CAPTURE_UNAVAILABLE')) {
     $script:failureCode=$reason
     function Read-CalibrationSample { throw $script:failureCode }
     $response=Invoke-HeaderRequest '{"operation":"calibrate"}' 42

@@ -7,7 +7,7 @@ const path=require('node:path');
 const {launchOptions,presentationRequest,trustedSender,windowCommand,allowedResource}=require('./security.cjs');
 const {trayBitmap}=require('./icon.cjs');
 const {WindowController}=require('./window-controller.cjs');
-const {TitleObserver,validCalibration}=require('./title-observer.cjs');
+const {TitleObserver,storedCalibration,REGION_PROFILE}=require('./title-observer.cjs');
 const {TitleReader}=require('./title-reader.cjs');
 const {TitleCalibration}=require('./title-calibration.cjs');
 const {AutoCalibration}=require('./auto-calibration.cjs');
@@ -53,14 +53,15 @@ function setupTitleReader(){
     const stat=fs.lstatSync(regionFile);
     if(stat.isSymbolicLink()||stat.size>1024)throw new Error('invalid');
     const saved=JSON.parse(fs.readFileSync(regionFile,'utf8'));
-    if(saved.profile==='wechat-4.1.13'&&validCalibration(saved.region))titleReader.setRegion(saved.region);
+    const region=storedCalibration(saved);
+    if(region)titleReader.setRegion(region);
   }catch{/* Missing or invalid numeric-only preferences require user calibration. */}
   titleCalibration=new TitleCalibration({shortcuts:globalShortcut,target:titleTarget,cursor:()=>screen.getCursorScreenPoint(),
     notify:code=>titleReader.stop(code),save:region=>{
       fs.mkdirSync(path.dirname(regionFile),{recursive:true});
       if(fs.existsSync(regionFile)&&fs.lstatSync(regionFile).isSymbolicLink())throw new Error('invalid');
       const temp=regionFile+'.'+require('node:crypto').randomUUID()+'.tmp';
-      fs.writeFileSync(temp,JSON.stringify({profile:'wechat-4.1.13',region}),{flag:'wx'});
+      fs.writeFileSync(temp,JSON.stringify({profile:REGION_PROFILE,region}),{flag:'wx'});
       fs.renameSync(temp,regionFile);titleReader.setRegion(region);
     }});
   titleAuto=new AutoCalibration({target:titleTarget,read:()=>titleReader.calibrate(),

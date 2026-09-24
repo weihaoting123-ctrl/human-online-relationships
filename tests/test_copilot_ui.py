@@ -733,6 +733,19 @@ class CopilotBrowserTests(unittest.TestCase):
         self.page.locator('#context-mode').select_option('manual')
         self.expect(self.page.locator('#auto-calibrate-title')).to_be_disabled()
 
+    def test_capture_and_dpi_failures_are_specific_without_sending_or_retrying(self):
+        self.open(native='auto')
+        for reason, message in [('TITLE_CAPTURE_UNAVAILABLE', '标题像素'),
+                                ('TITLE_DPI_UNAVAILABLE', '缩放坐标')]:
+            self.page.evaluate('(reason)=>window.calibrationReason=reason', reason)
+            self.page.locator('#auto-calibrate-title').click()
+            self.expect(self.page.locator('#auto-calibration-result')).to_contain_text(message)
+            self.expect(self.page.locator('#auto-calibration-result')).to_contain_text('不会自动重试')
+        self.assertEqual(len([call for call in self.page.evaluate('bridgeCalls') if call[0] == 'autoCalibrate']), 2)
+        self.assertFalse(any(path in {'/api/copilot/preview', '/api/copilot/run',
+                                     '/api/copilot/live/preview', '/api/copilot/live/start',
+                                     '/api/copilot/live/tick'} for path, _ in self.writes))
+
     def test_auto_calibration_failure_is_specific_and_browser_has_no_button(self):
         self.open(native='auto')
         self.page.evaluate("window.calibrationReason='TITLE_OCCLUDED'")

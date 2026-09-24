@@ -6,7 +6,7 @@ const path=require('node:path');
 const filename=path.join(__dirname,'../title-observer.cjs');
 test('local title observer exists',()=>assert.ok(fs.existsSync(filename)));
 if(fs.existsSync(filename)){
-  const {TitleObserver,validCalibration}=require(filename);
+  const {TitleObserver,validCalibration,storedCalibration,REGION_PROFILE}=require(filename);
   const frame=title=>({state:'observed',title,target:'synthetic-window',source:'local_ocr'});
   test('stable title requires two observations; change immediately clears',()=>{
     const observer=new TitleObserver();
@@ -38,5 +38,22 @@ if(fs.existsSync(filename)){
   test('calibration only permits a bounded top-header rectangle',()=>{
     assert.ok(validCalibration({x:300,y:25,width:250,height:40}));
     for(const roi of [{x:0,y:0,width:2000,height:1000},{x:100,y:200,width:200,height:40},{x:300,y:25,width:250,height:NaN},{x:300,y:25,width:250,height:40,extra:1}])assert.equal(validCalibration(roi),false);
+  });
+  test('stored calibration requires the explicit visual-frame coordinate profile',()=>{
+    const region={x:300,y:25,width:250,height:40};
+    assert.equal(REGION_PROFILE,'wechat-4.1.13-visual-v2');
+    assert.equal(storedCalibration({profile:'wechat-4.1.13',region}),null);
+    assert.equal(storedCalibration({profile:'unknown',region}),null);
+    assert.deepEqual(storedCalibration({profile:REGION_PROFILE,region}),region);
+    const restored=storedCalibration({profile:REGION_PROFILE,region});
+    restored.x=400;assert.equal(region.x,300);
+  });
+  test('stored calibration rejects invalid or non-numeric preferences',()=>{
+    const region={x:300,y:25,width:250,height:40};
+    for(const saved of [null,[],{}, {profile:REGION_PROFILE},
+      {profile:REGION_PROFILE,region:{...region,x:'300'}},
+      {profile:REGION_PROFILE,region:{...region,title:'Synthetic'}},
+      {profile:REGION_PROFILE,region,title:'Synthetic'},
+      {profile:REGION_PROFILE,region:{...region,y:200}}])assert.equal(storedCalibration(saved),null);
   });
 }

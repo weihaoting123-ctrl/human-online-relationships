@@ -48,6 +48,8 @@ RC3 增补一次点击的本机自动校准，不必手动标角；受支持标�
 
 RC6 修复标准外窗坐标与小字号中文 OCR 的校准失败，复用 #46 / PR #47，不新增重复需求；保留原图空白边缘、双样本与身份核对。见[修复边界与验收](docs/plans/2026-09-24-title-calibration-rc6.md)。完整实机链路与其他布局仍待验收。
 
+RC7 继续同一需求，修复窗口 DC 黑色位图的实际采集环节，统一可视边框坐标并要求旧区域重新校准；见[采集修复与回退边界](docs/plans/2026-09-24-title-capture-rc7.md)。不将 OCR 候选当作联系人身份认证，保留正式 1.0 兼容性验收门槛。
+
 ## A：先修好首次使用闭环（v0.1.1，已发布）
 
 [设计规范](docs/superpowers/specs/2026-09-06-v011-first-use-design.md) · [测试与发布计划](docs/superpowers/plans/2026-09-06-v011-first-use.md) · [审查记录](docs/reviews/v0.1.1-review.md) · [迭代里程碑](https://github.com/weihaoting123-ctrl/human-online-relationships/milestone/3)

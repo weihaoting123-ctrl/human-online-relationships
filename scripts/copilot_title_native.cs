@@ -11,6 +11,7 @@ using System.Text;
 public static class CopilotHeaderNative {
     [StructLayout(LayoutKind.Sequential)] public struct Rect { public int Left,Top,Right,Bottom; }
     [StructLayout(LayoutKind.Sequential)] public struct Point { public int X,Y; }
+    [StructLayout(LayoutKind.Sequential)] internal struct MonitorInfo { public int Size; public Rect Monitor,Work; public uint Flags; }
     public sealed class Target { public IntPtr Hwnd; public Rect Bounds; public uint Dpi,Pid; public long Started; public string Key; public int AssistantPid; }
     delegate bool EnumProc(IntPtr hwnd, IntPtr extra);
     [DllImport("user32.dll")] static extern bool EnumWindows(EnumProc callback,IntPtr extra);
@@ -26,10 +27,40 @@ public static class CopilotHeaderNative {
     [DllImport("user32.dll")] static extern uint GetDpiForWindow(IntPtr hwnd);
     [DllImport("user32.dll")] static extern IntPtr SetThreadDpiAwarenessContext(IntPtr context);
     [DllImport("user32.dll")] static extern IntPtr WindowFromPoint(Point point);
-    [DllImport("user32.dll")] static extern IntPtr GetWindowDC(IntPtr hwnd);
+    [DllImport("user32.dll")] static extern IntPtr GetDC(IntPtr hwnd);
     [DllImport("user32.dll")] static extern int ReleaseDC(IntPtr hwnd,IntPtr dc);
+    [DllImport("kernel32.dll")] static extern uint GetCurrentThreadId();
+    [DllImport("user32.dll")] static extern IntPtr GetThreadDesktop(uint thread);
+    [DllImport("user32.dll",EntryPoint="GetUserObjectInformationW")] static extern bool GetUserObjectInformation(IntPtr desktop,int index,out int value,int length,out int needed);
+    [DllImport("user32.dll")] static extern IntPtr MonitorFromRect(ref Rect rect,uint flags);
+    [DllImport("user32.dll",EntryPoint="GetMonitorInfoW")] static extern bool GetMonitorInfo(IntPtr monitor,ref MonitorInfo info);
     [DllImport("gdi32.dll")] static extern bool BitBlt(IntPtr dst,int x,int y,int w,int h,IntPtr src,int sx,int sy,uint operation);
     [DllImport("dwmapi.dll")] static extern int DwmGetWindowAttribute(IntPtr hwnd,int attr,out int value,int size);
+    [DllImport("dwmapi.dll")] static extern int DwmGetWindowAttribute(IntPtr hwnd,int attr,out Rect value,int size);
+
+    sealed class DpiScope : IDisposable {
+        readonly IntPtr previous;
+        public DpiScope(){
+            previous=SetThreadDpiAwarenessContext(new IntPtr(-4));
+            if(previous==IntPtr.Zero)throw new InvalidOperationException("TITLE_DPI_UNAVAILABLE");
+        }
+        public void Dispose(){
+            if(SetThreadDpiAwarenessContext(previous)==IntPtr.Zero)throw new InvalidOperationException("TITLE_DPI_UNAVAILABLE");
+        }
+    }
+    static bool InputDesktopActive(){
+        IntPtr desktop=GetThreadDesktop(GetCurrentThreadId());int active,needed;
+        return desktop!=IntPtr.Zero&&GetUserObjectInformation(desktop,6,out active,4,out needed)&&active!=0;
+    }
+    static bool VisualBounds(IntPtr hwnd,out Rect rect){
+        // DWM reports physical visible bounds, matching the window watcher and
+        // manual calibration. Never reinterpret this ROI using resize borders.
+        // The fixed header probe is supported only where the outer and visible
+        // top agree. A changed top inset could shift its bottom into the body.
+        Rect outer;
+        return DwmGetWindowAttribute(hwnd,9,out rect,Marshal.SizeOf(typeof(Rect)))==0&&
+            rect.Right>rect.Left&&rect.Bottom>rect.Top&&GetWindowRect(hwnd,out outer)&&outer.Top==rect.Top;
+    }
 
     public static bool ValidRoi(double x,double y,double width,double height) {
         foreach(double value in new[]{x,y,width,height})if(Double.IsNaN(value)||Double.IsInfinity(value))return false;
@@ -40,7 +71,7 @@ public static class CopilotHeaderNative {
         double width=(target.Bounds.Right-target.Bounds.Left)/(target.Dpi/96.0);
         double height=(target.Bounds.Bottom-target.Bounds.Top)/(target.Dpi/96.0);
         if(width<700||width>2000||height<320)throw new ArgumentException("TITLE_AUTO_CALIBRATION_LAYOUT_UNSUPPORTED");
-        // Outer-window DIP coordinates for the checked 4.1.13 standard layout:
+        // Visible-window DIP coordinates for the checked 4.1.13 standard layout:
         // below its top chrome, inside the chat header, and left of its toolbar.
         // Never extend downward or fall back to the message body when OCR is absent.
         return new RectangleF(304,36,(float)Math.Min(width-304-160,480),40);
@@ -87,7 +118,13 @@ public static class CopilotHeaderNative {
         return true;
     }
     public static Target Find(int assistantPid) {
-        SetThreadDpiAwarenessContext(new IntPtr(-4));
+        using(var dpi=new DpiScope()){
+            if(!InputDesktopActive())return null;
+            var target=FindCurrent(assistantPid);
+            return InputDesktopActive()?target:null;
+        }
+    }
+    static Target FindCurrent(int assistantPid) {
         var candidates=new List<Target>();
         EnumProc visit=delegate(IntPtr hwnd,IntPtr extra) {
             try {
@@ -99,7 +136,7 @@ public static class CopilotHeaderNative {
                 uint pid;GetWindowThreadProcessId(hwnd,out pid);
                 using(var process=Process.GetProcessById((int)pid)){
                     if(!String.Equals(process.ProcessName,"Weixin",StringComparison.OrdinalIgnoreCase))return true;
-                    Rect rect;if(!GetWindowRect(hwnd,out rect))return true;
+                    Rect rect;if(!VisualBounds(hwnd,out rect))throw new InvalidOperationException();
                     // Count hidden/minimized main windows too; do not guess between accounts.
                     if(!IsIconic(hwnd) && (rect.Right-rect.Left<480||rect.Bottom-rect.Top<320))return true;
                     string version=process.MainModule.FileVersionInfo.FileVersion;
@@ -112,8 +149,8 @@ public static class CopilotHeaderNative {
             } catch { candidates.Add(null); }
             return true;
         };
-        EnumWindows(visit,IntPtr.Zero);GC.KeepAlive(visit);
-        if(candidates.Count!=1||candidates[0]==null)return null;
+        bool complete=EnumWindows(visit,IntPtr.Zero);GC.KeepAlive(visit);
+        if(!complete||candidates.Count!=1||candidates[0]==null)return null;
         var target=candidates[0];int cloaked;
         if(!IsWindowVisible(target.Hwnd)||IsIconic(target.Hwnd)||DwmGetWindowAttribute(target.Hwnd,14,out cloaked,4)!=0||cloaked!=0)return null;
         IntPtr active=GetForegroundWindow();uint activePid;GetWindowThreadProcessId(active,out activePid);
@@ -122,19 +159,9 @@ public static class CopilotHeaderNative {
         return target;
     }
     static bool StillCurrent(Target target){
-        try {
-            uint pid;GetWindowThreadProcessId(target.Hwnd,out pid);Rect rect;
-            if(pid!=target.Pid || !GetWindowRect(target.Hwnd,out rect) || !IsWindowVisible(target.Hwnd) || IsIconic(target.Hwnd))return false;
-            if(rect.Left!=target.Bounds.Left||rect.Top!=target.Bounds.Top||rect.Right!=target.Bounds.Right||rect.Bottom!=target.Bounds.Bottom||GetDpiForWindow(target.Hwnd)!=target.Dpi)return false;
-            int cloaked;
-            if(DwmGetWindowAttribute(target.Hwnd,14,out cloaked,4)!=0||cloaked!=0)return false;
-            IntPtr active=GetForegroundWindow();uint activePid;GetWindowThreadProcessId(active,out activePid);
-            if((activePid!=target.Pid||GetAncestor(active,2)!=target.Hwnd)&&activePid!=(uint)target.AssistantPid)return false;
-            using(var process=Process.GetProcessById((int)pid)){
-                string version=process.MainModule.FileVersionInfo.FileVersion;
-                return process.StartTime.ToUniversalTime().Ticks==target.Started&&version!=null&&version.StartsWith("4.1.13.",StringComparison.Ordinal);
-            }
-        }catch{return false;}
+        // Re-enumerate as well as checking identity, geometry, DPI, foreground
+        // and supported version: a newly opened second account also invalidates.
+        try{return SameTarget(target,FindCurrent(target.AssistantPid));}catch{return false;}
     }
     public static Bitmap Capture(Target target,double x,double y,double width,double height) {
         if(target==null||!ValidRoi(x,y,width,height))throw new ArgumentException("TITLE_ROI_INVALID");
@@ -149,6 +176,14 @@ public static class CopilotHeaderNative {
         // windows between those points. EnumWindows visits top-level Z order.
         bool covered=false,reached=false;
         var patch=new Rectangle(target.Bounds.Left+sx,target.Bounds.Top+sy,w,h);
+        // The virtual-desktop bounding box can include gaps between monitors.
+        // Require this entire small patch on one actual display; never clip it.
+        var physical=new Rect{Left=patch.Left,Top=patch.Top,Right=patch.Right,Bottom=patch.Bottom};
+        IntPtr monitor=MonitorFromRect(ref physical,0);
+        var info=new MonitorInfo{Size=Marshal.SizeOf(typeof(MonitorInfo))};
+        if(monitor==IntPtr.Zero||!GetMonitorInfo(monitor,ref info)||physical.Left<info.Monitor.Left||
+            physical.Top<info.Monitor.Top||physical.Right>info.Monitor.Right||physical.Bottom>info.Monitor.Bottom)
+            throw new InvalidOperationException("TITLE_OCCLUDED");
         EnumProc visit=delegate(IntPtr hwnd,IntPtr extra) {
             if(hwnd==target.Hwnd){reached=true;return false;}
             if(!IsWindowVisible(hwnd)||IsIconic(hwnd))return true;
@@ -166,24 +201,36 @@ public static class CopilotHeaderNative {
         }
     }
     static Bitmap CaptureRectangle(Target target,double x,double y,double width,double height) {
-        if(!StillCurrent(target))throw new InvalidOperationException("TITLE_TARGET_CHANGED");
-        double scale=target.Dpi/96.0;
-        int sx=(int)Math.Round(x*scale),sy=(int)Math.Round(y*scale),w=(int)Math.Round(width*scale),h=(int)Math.Round(height*scale);
-        if(sx+w>target.Bounds.Right-target.Bounds.Left-8 || sy+h>target.Bounds.Bottom-target.Bounds.Top)throw new ArgumentException("TITLE_ROI_OUTSIDE");
-        AssertUncovered(target,sx,sy,w,h);
-        var bitmap=new Bitmap(w,h,System.Drawing.Imaging.PixelFormat.Format32bppArgb);
-        IntPtr source=GetWindowDC(target.Hwnd);
-        if(source==IntPtr.Zero){bitmap.Dispose();throw new InvalidOperationException("TITLE_CAPTURE_UNAVAILABLE");}
+        Bitmap bitmap=null;
         try {
-            using(var graphics=Graphics.FromImage(bitmap)){
-                IntPtr destination=graphics.GetHdc();
-                try {if(!BitBlt(destination,0,0,w,h,source,sx,sy,0x00CC0020))throw new InvalidOperationException("TITLE_CAPTURE_UNAVAILABLE");}
-                finally {graphics.ReleaseHdc(destination);}
+            using(var dpi=new DpiScope()){
+                if(!InputDesktopActive())throw new InvalidOperationException("TITLE_WINDOW_UNAVAILABLE");
+                if(!StillCurrent(target))throw new InvalidOperationException("TITLE_TARGET_CHANGED");
+                double scale=target.Dpi/96.0;
+                int sx=checked((int)Math.Round(x*scale)),sy=checked((int)Math.Round(y*scale));
+                int w=checked((int)Math.Round(width*scale)),h=checked((int)Math.Round(height*scale));
+                if(sx+w>target.Bounds.Right-target.Bounds.Left-8 || sy+h>target.Bounds.Bottom-target.Bounds.Top)throw new ArgumentException("TITLE_ROI_OUTSIDE");
+                AssertUncovered(target,sx,sy,w,h);
+                bitmap=new Bitmap(w,h,System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+                // GPU-composited applications can expose a black window DC.
+                // Copy only the verified header rectangle from visible pixels;
+                // no full-window/desktop bitmap or larger fallback is allocated.
+                IntPtr source=GetDC(IntPtr.Zero);
+                if(source==IntPtr.Zero)throw new InvalidOperationException("TITLE_CAPTURE_UNAVAILABLE");
+                try {
+                    using(var graphics=Graphics.FromImage(bitmap)){
+                        IntPtr destination=graphics.GetHdc();
+                        try {if(!BitBlt(destination,0,0,w,h,source,checked(target.Bounds.Left+sx),checked(target.Bounds.Top+sy),0x00CC0020))throw new InvalidOperationException("TITLE_CAPTURE_UNAVAILABLE");}
+                        finally {graphics.ReleaseHdc(destination);}
+                    }
+                    if(!InputDesktopActive())throw new InvalidOperationException("TITLE_WINDOW_UNAVAILABLE");
+                    if(!StillCurrent(target))throw new InvalidOperationException("TITLE_TARGET_CHANGED");
+                    AssertUncovered(target,sx,sy,w,h);
+                } finally {
+                    if(ReleaseDC(IntPtr.Zero,source)==0)throw new InvalidOperationException("TITLE_CAPTURE_UNAVAILABLE");
+                }
             }
-            if(!StillCurrent(target))throw new InvalidOperationException("TITLE_TARGET_CHANGED");
-            AssertUncovered(target,sx,sy,w,h);
             return bitmap;
-        } catch {bitmap.Dispose();throw;}
-        finally {ReleaseDC(target.Hwnd,source);}
+        } catch {if(bitmap!=null)bitmap.Dispose();throw;}
     }
 }

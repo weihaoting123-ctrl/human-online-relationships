@@ -41,6 +41,7 @@ class TitleReader {
               }else if(frame?.state==='unavailable'){
                 const reason=['TITLE_LAYOUT_UNSUPPORTED','TITLE_OCCLUDED','TITLE_WINDOW_UNAVAILABLE','TITLE_AUTO_AMBIGUOUS',
                   'TITLE_TARGET_CHANGED','TITLE_UNREADABLE','TITLE_OCR_NOT_INSTALLED','TITLE_AUTO_CALIBRATION_UNAVAILABLE',
+                  'TITLE_DPI_UNAVAILABLE','TITLE_CAPTURE_UNAVAILABLE',
                   'TITLE_AUTO_CALIBRATION_UNSTABLE','TITLE_AUTO_CALIBRATION_UNREADABLE','TITLE_AUTO_CALIBRATION_LAYOUT_UNSUPPORTED'].includes(frame.reason)?frame.reason:'TITLE_AUTO_FAILED';
                 this.finish(this.observer.clear(reason));
               }else this.stop('TITLE_PROTOCOL_ERROR');
