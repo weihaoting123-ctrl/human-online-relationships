@@ -134,6 +134,68 @@ class LiveReadTests(unittest.TestCase):
         self.assertEqual(second['rows'][0]['server_id'], '501')
         self.assertNotEqual(first['cursor']['digest'], second['cursor']['digest'])
 
+    def test_unchanged_sources_skip_snapshot_copy_query_and_decode(self):
+        path = self.shard()
+        self.insert(path)
+        first = self.read()
+        with mock.patch.object(live, '_recent_rows', wraps=live._recent_rows) as query, \
+             mock.patch.object(sync.shutil, 'copyfile', wraps=sync.shutil.copyfile) as copy_file:
+            second = self.read(first['cursor'])
+        self.assertEqual(query.call_count, 0, 'unchanged databases must not repeat SQL/text decoding')
+        self.assertEqual(copy_file.call_count, 0)
+        self.assertTrue(second['unchanged'])
+        self.assertEqual(second['rows'], [])
+        self.assertEqual(second['cursor'], first['cursor'])
+
+    def test_reusable_runtime_refreshes_only_changed_shard_and_cleans_copies(self):
+        first, second = self.shard(), self.shard(1)
+        self.insert(first)
+        self.insert(second, 2, '502', timestamp=1700000001)
+        runtime = live.ReaderRuntime(self.root)
+        self.addCleanup(runtime.close)
+        def read(previous=None):
+            return live.read_contact(self.root, self.bundle_id, previous, runtime=runtime)
+        with mock.patch.object(sync.shutil, 'copyfile', wraps=sync.shutil.copyfile) as copying:
+            baseline = read()
+            initial_copies = copying.call_count
+            self.assertEqual(initial_copies, 2)
+            self.assertTrue(read(baseline['cursor'])['unchanged'])
+            self.assertEqual(copying.call_count, initial_copies)
+            self.insert(second, 3, '503', timestamp=1700000002)
+            updated = read(baseline['cursor'])
+            self.assertEqual(len(updated['rows']), 3)
+            self.assertEqual(copying.call_count - initial_copies, 1)
+        copies = [item.root for item in runtime.snapshots.slots.values()]
+        self.assertTrue(all(path.exists() for path in copies))
+        runtime.close()
+        self.assertTrue(all(not path.exists() for path in copies))
+        self.assertTrue(first.exists() and second.exists())
+
+    def test_reusable_runtime_failed_refresh_never_returns_old_data(self):
+        path = self.shard()
+        self.insert(path)
+        runtime = live.ReaderRuntime(self.root)
+        self.addCleanup(runtime.close)
+        baseline = live.read_contact(self.root, self.bundle_id, runtime=runtime)
+        self.insert(path, 2, '502', timestamp=1700000001)
+        with mock.patch.object(sync.shutil, 'copyfile', side_effect=OSError('synthetic busy')):
+            self.assert_code('LIVE_SOURCE_BUSY', lambda: live.read_contact(
+                self.root, self.bundle_id, baseline['cursor'], runtime=runtime))
+
+    def test_same_metadata_changed_bytes_are_not_skipped(self):
+        import os
+        path = self.shard()
+        self.insert(path, text='synthetic first')
+        first = self.read()
+        stamp = path.stat()
+        with closing(sqlite3.connect(path)) as conn, conn:
+            conn.execute(f'UPDATE "{self.table}" SET message_content="synthetic other"')
+        os.utime(path, ns=(stamp.st_atime_ns, stamp.st_mtime_ns))
+        changed = self.read(first['cursor'])
+        self.assertFalse(changed.get('unchanged', False))
+        self.assertEqual(changed['rows'][0]['text'], 'synthetic other')
+        self.assertNotEqual(first['cursor'], changed['cursor'])
+
     def test_global_recent_tail_200_and_nontext_never_decoded(self):
         first = self.shard()
         second = self.shard(1)
@@ -256,7 +318,7 @@ import sys
 spec=importlib.util.spec_from_file_location('live',sys.argv[1])
 live=importlib.util.module_from_spec(spec)
 spec.loader.exec_module(live)
-def fail(*args):
+def fail(*args, **kwargs):
     print('SYNTHETIC_PRIVATE_DIAGNOSTIC')
     print('SYNTHETIC_PRIVATE_ERROR',file=sys.stderr)
     raise ValueError('SYNTHETIC_PRIVATE_EXCEPTION')
@@ -268,6 +330,25 @@ raise SystemExit(live.main())
                                 capture_output=True, text=True, timeout=10)
         self.assertEqual(result.stdout.strip(), '{"ok":false,"code":"LIVE_READ_FAILED"}')
         self.assertEqual(result.stderr, '')
+
+    def test_serve_reuses_runtime_and_rejects_source_switch(self):
+        import contextlib
+        requests = '\n'.join(json.dumps({'bundle_id': item}) for item in
+                             (self.bundle_id, self.bundle_id, 'another-synthetic')) + '\n'
+        output = io.StringIO()
+        runtime = mock.Mock()
+        expected = {'ok': True, 'rows': []}
+        with mock.patch.object(sys, 'stdin', io.StringIO(requests)), \
+             mock.patch.object(sys, 'stdout', output), \
+             mock.patch.object(live, '_private_stdio', contextlib.nullcontext), \
+             mock.patch.object(live, 'ReaderRuntime', return_value=runtime) as create, \
+             mock.patch.object(live, '_response', return_value=(expected, 0)) as respond:
+            self.assertEqual(live.serve(), 1)
+        self.assertEqual(create.call_count, 1)
+        self.assertEqual(respond.call_count, 2)
+        self.assertEqual(json.loads(output.getvalue().splitlines()[-1]),
+                         {'ok': False, 'code': 'LIVE_IDENTITY_CHANGED'})
+        runtime.close.assert_called_once()
 
     def test_identity_header_does_not_decode_history_and_handles_partial_utf8_tail(self):
         path = self.shard()
@@ -326,7 +407,8 @@ raise SystemExit(live.main())
         self.insert(path)
         opened = []
         def connect(_reader, record):
-            connection = sqlite3.connect(Path(record['path']).as_uri() + '?mode=ro', uri=True)
+            snapshot = sync._ACTIVE_DATABASE_SNAPSHOTS.get().path_for(Path(record['path']))
+            connection = sqlite3.connect(snapshot.as_uri() + '?mode=ro', uri=True)
             opened.append(connection)
             return connection
         try:
@@ -338,6 +420,33 @@ raise SystemExit(live.main())
         finally:
             for connection in opened:
                 connection.close()
+
+    def test_wal_update_and_new_shard_invalidate_idle_marker(self):
+        path = self.shard()
+        self.insert(path)
+        connection = sqlite3.connect(path)
+        self.addCleanup(connection.close)
+        connection.execute('PRAGMA journal_mode=WAL')
+        connection.execute('PRAGMA wal_autocheckpoint=0')
+        first = self.read()
+        connection.execute(f'INSERT INTO "{self.table}" VALUES (2,"502",1,2,1700000001,"new wal text",NULL)')
+        connection.commit()
+        updated = self.read(first['cursor'])
+        self.assertFalse(updated.get('unchanged', False))
+        self.assertEqual(len(updated['rows']), 2)
+        self.assertTrue(self.read(updated['cursor'])['unchanged'])
+        other = self.shard(1)
+        self.insert(other, 3, '503', timestamp=1700000002)
+        changed = self.read(updated['cursor'])
+        self.assertFalse(changed.get('unchanged', False))
+        self.assertEqual(len(changed['rows']), 3)
+
+    def test_idle_check_still_rechecks_account_and_identity(self):
+        path = self.shard()
+        self.insert(path)
+        first = self.read()
+        self.discover.side_effect = [(self.owner, self.root), ('other-synthetic-account', self.root)]
+        self.assert_code('LIVE_IDENTITY_CHANGED', lambda: self.read(first['cursor']))
 
     def test_server_alias_across_partitions_is_preserved_for_consumer_dedup(self):
         first = self.shard()

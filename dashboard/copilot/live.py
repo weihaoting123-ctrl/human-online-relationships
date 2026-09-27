@@ -14,7 +14,7 @@ import time
 
 from dashboard import analysis as ai
 from dashboard.copilot import service as cp
-from dashboard.copilot.read_transport import read_tail as _read_tail, validate_tail, LiveReadError, _stamp
+from dashboard.copilot.read_transport import read_tail as _read_tail, release_reader, validate_tail, LiveReadError, _stamp
 
 
 LIMITS = {'duration_seconds': 900, 'max_calls': 6, 'min_call_interval_seconds': 20,
@@ -71,6 +71,7 @@ def _digest(value):
 
 
 def _end(session, reason):
+    release_reader(session['scope']['bundle_id'])
     session.update(state='stopped', reason=reason, result=None, pending=[], pending_peer=False,
                    sample=[], names=[], seen={}, local_servers={}, anchors=set(), cursor=None)
 
@@ -78,7 +79,8 @@ def _end(session, reason):
 def _dto(session, *, report_busy=False):
     state = 'busy' if report_busy and session['busy'] and session['state'] != 'stopped' else session['state']
     return {'status': 'ok', 'session_id': session['session_id'], 'state': state,
-            'reason': session['reason'], 'binding_revision': session['binding_revision'],
+            'reason': 'GENERATING' if session.get('generating') and session['state'] != 'stopped' else session['reason'],
+            'binding_revision': session['binding_revision'],
             'remaining_seconds': max(0, int(session['expires'] - _now())),
             'calls_used': session['attempts'], 'calls_remaining': max(0, 6 - session['attempts']),
             'result': session['result'] if session['state'] != 'stopped' else None}
@@ -185,12 +187,12 @@ def start(data_dir, contacts_dir, request, *, admission):
         if prepared['expires'] <= _now() or prepared['binding_revision'] != request['binding_revision']:
             raise ai.AnalysisError('限时预览已过期或范围变化，请重新预览')
         previous = _SESSIONS.get(workspace)
-        if previous and previous['busy']:
+        if previous and (previous['busy'] or previous.get('generating')):
             raise ai.AnalysisError('上一会话仍有在途操作，请等待完成后重新预览')
         if previous:
             _end(previous, 'REPLACED')
         for key, item in list(_SESSIONS.items()):
-            if not item['busy'] and item['expires'] <= _now():
+            if not item['busy'] and not item.get('generating') and item['expires'] <= _now():
                 del _SESSIONS[key]
         if workspace not in _SESSIONS and len(_SESSIONS) >= 64:
             raise ai.AnalysisError('限时会话数量达到上限，请稍后再试')
@@ -198,7 +200,8 @@ def start(data_dir, contacts_dir, request, *, admission):
                    'state': 'active', 'reason': 'BASELINE', 'busy': True, 'attempts': 0,
                    'last_call': float('-inf'), 'result': None, 'pending': [], 'pending_peer': False,
                    'pending_since': _now(), 'seen': {}, 'local_servers': {},
-                   'anchors': set(), 'cursor': None, 'identity': None}
+                   'anchors': set(), 'cursor': None, 'identity': None,
+                   'generating': False, 'context_revision': 0, 'model_worker': None}
         # Wall time bounds the authorized message creation times; monotonic time
         # alone bounds the session lifetime (clock changes never renew it).
         session.update(grant_wall=int(_wall_now()), watermark=float('-inf'))
@@ -234,6 +237,10 @@ def _row_keys(row):
 
 
 def _observe(session, value, *, baseline=False):
+    if value.get('unchanged'):
+        if baseline or value['identity'] != session['identity'] or value['cursor'] != session['cursor']:
+            _end(session, 'SOURCE_CHANGED')
+        return
     if not baseline and value['identity'] != session['identity']:
         _end(session, 'SOURCE_IDENTITY_CHANGED')
         return
@@ -273,6 +280,11 @@ def _observe(session, value, *, baseline=False):
     session['watermark'] = max([session['watermark']] + [_stamp(row['timestamp']) for row in value['rows']])
     if baseline:
         return
+    if fresh:
+        session['context_revision'] += 1
+        session['reason'] = 'NEW_TEXT'
+        if session['state'] != 'exhausted':
+            session['result'] = None
     if session['state'] != 'exhausted' and (len(fresh) > 20 or sum(len(row['text']) for row in fresh) > 4000):
         _end(session, 'BATCH_OVERFLOW')
         return
@@ -314,7 +326,7 @@ def tick(data_dir, contacts_dir, request, *, admission):
             if session['state'] == 'stopped':
                 return _dto(session)
             _observe(session, value)
-            if (session['state'] != 'active' or not session['pending_peer']
+            if (session['state'] != 'active' or session['generating'] or not session['pending_peer']
                     or _now() - session['pending_since'] < 3 or _now() - session['last_call'] < 20):
                 return _dto(session)
             incoming = [{'date': row['timestamp'][:10], 'sender': '我' if row['sender'] == 'me' else '对方',
@@ -327,14 +339,15 @@ def tick(data_dir, contacts_dir, request, *, admission):
             content = {'date_from': session['scope']['date_from'], 'date_to': session['scope']['date_to'],
                        'direction': session['scope']['direction'], 'sample': session['sample'] + incoming,
                        'latest_draft': ''}
+            context_revision = session['context_revision']
         try:
             key = ai._unseal(config['sealed_key'])
             if not isinstance(key, str) or not key:
                 raise ValueError
         except Exception:
             raise _ScopeChanged('KEY_UNAVAILABLE') from None
-        # No file I/O inside this shared binding/claim lock. Observation revoke
-        # either wins before this claim or concerns an already in-flight call.
+        # Reserve the worker here; the worker consumes budget only when it
+        # claims the actual call after rechecking the latest context.
         with _GATE:
             config, index = _guard(data_dir, contacts_dir, session, admission)
             with cp._LOCK:
@@ -344,22 +357,14 @@ def tick(data_dir, contacts_dir, request, *, admission):
                     _session(workspace, session['session_id'])
                     if session['state'] != 'active':
                         return _dto(session)
-                    session['attempts'] += 1
-                    session['last_call'] = _now()
-                    session['pending'], session['pending_peer'] = [], False
+                    session['generating'] = True
         try:
-            result = cp.safe_result(ai._request_json(config, key, content, cp.SYSTEM_PROMPT))
+            _launch_model(session, lambda: _generate(data_dir, contacts_dir, session, config, key,
+                                                    content, context_revision, admission))
         except Exception:
             with _LOCK:
-                _end(session, 'CALL_FAILED_POSSIBLY_CHARGED')
-            return _dto(session)
-        _guard(data_dir, contacts_dir, session, admission)
-        with _LOCK:
-            _session(workspace, session['session_id'])
-            if session['state'] != 'stopped':
-                session['result'] = {'result_id': secrets.token_hex(24), **result}
-                session['reason'] = 'CALL_LIMIT_REACHED' if session['attempts'] >= 6 else 'READY'
-                session['state'] = 'exhausted' if session['attempts'] >= 6 else 'active'
+                session['generating'] = False
+            raise
     except Exception as error:
         with _LOCK:
             if session['state'] != 'stopped':
@@ -369,6 +374,63 @@ def tick(data_dir, contacts_dir, request, *, admission):
             session['busy'] = False
     with _LOCK:
         return _dto(session)
+
+
+def _launch_model(session, action):
+    """One daemon per active grant, never an unbounded queued/retrying executor."""
+    worker = threading.Thread(target=action, name='copilot-model', daemon=True)
+    session['model_worker'] = worker
+    worker.start()
+
+
+def _generate(data_dir, contacts_dir, session, config, key, content, revision, admission):
+    """The HTTP read loop remains available while this single paid call waits."""
+    workspace = cp._workspace(data_dir, contacts_dir)
+    try:
+        with _GATE:
+            _, index = _guard(data_dir, contacts_dir, session, admission)
+            # Native title observations share cp._LOCK, not the settings gate.
+            # Revalidate under that lock through the actual paid-call claim.
+            with cp._LOCK:
+                cp._BINDINGS.validate(workspace, session['binding']['binding_token'],
+                    session['scope']['bundle_id'], lambda: index, expected=session['binding'])
+                with _LOCK:
+                    _session(workspace, session['session_id'])
+                    if session['state'] != 'active' or session['context_revision'] != revision:
+                        return
+                    session['attempts'] += 1
+                    session['last_call'] = _now()
+        try:
+            result = cp.safe_result(ai._request_json(config, key, content, cp.SYSTEM_PROMPT))
+        except Exception:
+            with _LOCK:
+                if session['state'] != 'stopped':
+                    _end(session, 'CALL_FAILED_POSSIBLY_CHARGED')
+            return
+        _guard(data_dir, contacts_dir, session, admission)
+        with _LOCK:
+            _session(workspace, session['session_id'])
+            if session['state'] == 'stopped':
+                return
+            # New peer text OR our reply makes an in-flight suggestion obsolete.
+            # Retain the pending batch for the next bounded call unless _observe
+            # already cleared it on an outbound message. Never retry this call.
+            if session['context_revision'] == revision:
+                session['result'] = {'result_id': secrets.token_hex(24), **result}
+                session['pending'], session['pending_peer'] = [], False
+                session['reason'] = 'READY'
+            else:
+                session['reason'] = 'NEW_TEXT'
+            if session['attempts'] >= 6:
+                session['state'], session['reason'] = 'exhausted', 'CALL_LIMIT_REACHED'
+                session['pending'], session['pending_peer'] = [], False
+    except Exception as error:
+        with _LOCK:
+            if session['state'] != 'stopped':
+                _end(session, _failure_reason(error))
+    finally:
+        with _LOCK:
+            session['generating'] = False
 
 
 def stop(data_dir, contacts_dir, request):
