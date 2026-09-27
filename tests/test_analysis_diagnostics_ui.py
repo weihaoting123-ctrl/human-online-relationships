@@ -59,6 +59,25 @@ class AnalysisDiagnosticsBrowserTests(unittest.TestCase):
         self.expect(self.page.locator('#ai-retry-uncertain')).not_to_be_checked()
         self.expect(self.page.locator('#ai-run-button')).to_be_disabled()
 
+    def test_far_future_expiry_is_bounded_without_auto_authorization(self):
+        self.page.evaluate("""(() => {
+          window.syntheticTimerDelays = [];
+          const schedule = window.setTimeout;
+          window.setTimeout = function(callback, delay, ...args) {
+            window.syntheticTimerDelays.push(Number(delay));
+            return schedule.call(this, callback, delay, ...args);
+          };
+        })();""")
+        self.open_ai()
+        self.select_scope()
+        self.preview()
+        delays = self.page.evaluate('syntheticTimerDelays')
+        self.assertIn(600000, delays)
+        self.assertFalse(any(delay and delay > 2147483647 for delay in delays))
+        self.expect(self.page.locator('#ai-preview')).to_be_visible()
+        self.assert_consent_cleared()
+        self.assertEqual(self.run_calls(), [])
+
     def test_first_segment_failure_shows_attempt_without_claiming_success_or_billing(self):
         self.no_report = True
         self.progress_overrides = {'completed_calls': 0, 'completed_segments': 0,

@@ -16,6 +16,16 @@
 - 每次交付更新“实际版本 / PR / 测试证据”，不能把候选版本当作完成记录。
 - 按 [项目托管规范](docs/project-stewardship.md)，后续常规范围确认由受托代理逐批判断并记录，不再重复要求维护者选择技术方案；仍保留数据授权、实机验收与发布门槛。
 
+## 当前优先：COPILOT-06 / 及时与无感读取
+
+P2，1.0.0-rc.8 候选。[主 Issue #50](https://github.com/weihaoting123-ctrl/human-online-relationships/issues/50) · [读取链路与验收门槛](docs/plans/2026-09-27-copilot-reading.md) · [审查记录](docs/reviews/v1.0.0-rc.8-review.md)。实现读取器/快照复用、变化分片刷新、本机检测与模型调度解耦；实际设备延迟保留实机验收，完整回归和远端状态记录在关联 PR。
+
+## 暂缓：COPILOT-05 / 轻量解读卡
+
+P2，未发布工作，因用户明确优先及时、无感读取而暂缓部署，不属于 RC8 发布范围。
+
+同一次已授权回复请求增加当前轮摘要、可能交流行为、接话思路与不确定性。可折叠轻量卡片和紧凑标签；缺失或格式不合格时保留有效回复，不新增调用或自动重试。不进行好感度评分，不扩大聊天范围，不自动下载本地模型。真实语义质量及原生兼容性另行验收。
+
 ## 用户指定独立迭代：COPILOT-01 / 1.0.0-rc.1
 
 无感桌面对话副驾，P2，待验收。[主 Issue #44](https://github.com/weihaoting123-ctrl/human-online-relationships/issues/44) · [设计](docs/superpowers/specs/2026-09-24-copilot-v1-design.md) · [使用与非目标](docs/copilot.md)。

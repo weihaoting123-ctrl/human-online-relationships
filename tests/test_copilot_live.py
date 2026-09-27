@@ -1,6 +1,7 @@
 """Fixed-conversation live sessions use invented archives and mocked I/O only."""
 import copy
 import importlib
+import io
 import json
 import subprocess
 import threading
@@ -32,6 +33,10 @@ class CopilotLiveTests(CopilotFixture):
         self.assertIsNotNone(importlib.util.find_spec('dashboard.copilot.live'),
                              'A bounded live session service must exist')
         self.live = importlib.import_module('dashboard.copilot.live')
+        self.real_launch = self.live._launch_model
+        launch = mock.patch.object(self.live, '_launch_model', side_effect=lambda session, action: action())
+        self.launch = launch.start()
+        self.addCleanup(launch.stop)
         self.live._PREVIEWS.clear()
         self.live._SESSIONS.clear()
         self.cp._BINDINGS.sessions.clear()
@@ -123,6 +128,18 @@ class CopilotLiveTests(CopilotFixture):
         self.assertNotIn('partition:', sent)
         self.assertEqual(self.tick(active)['result']['result_id'], result['result']['result_id'])
         self.assertEqual(self.cloud.call_count, 1)
+
+    def test_unchanged_tail_keeps_baseline_without_triggering_cloud(self):
+        base = tail(live_row(1))
+        base['cursor'].update(version=2, source_digest='c' * 64)
+        self.reader.return_value = base
+        active = self.start_live()
+        self.assertEqual(active['state'], 'active')
+        self.reader.return_value = {**base, 'rows': [], 'unchanged': True}
+        self.assertEqual(self.tick(active)['state'], 'active')
+        self.cloud.assert_not_called()
+        self.reader.return_value['cursor'] = {**base['cursor'], 'digest': 'd' * 64}
+        self.assertEqual(self.tick(active)['state'], 'stopped')
 
     def test_outbound_message_cancels_pending_peer(self):
         active = self.start_live()
@@ -229,6 +246,113 @@ class CopilotLiveTests(CopilotFixture):
             self.assertEqual(task.result(3)['state'], 'stopped')
         self.cloud.assert_not_called()
 
+    def test_model_wait_does_not_block_reading_or_publish_obsolete_reply(self):
+        self.launch.side_effect = self.real_launch
+        active = self.start_live()
+        self.reader.return_value = tail(live_row(1), live_row(2))
+        self.tick(active)
+        self.now[0] += 3
+        entered, release = threading.Event(), threading.Event()
+        def cloud(*args):
+            entered.set()
+            self.assertTrue(release.wait(5))
+            return copy.deepcopy(RESPONSE)
+        self.cloud.side_effect = cloud
+        with ThreadPoolExecutor(2) as pool:
+            task = pool.submit(self.tick, active)
+            self.assertTrue(entered.wait(3))
+            try:
+                self.assertEqual(task.result(timeout=1)['reason'], 'GENERATING')
+                self.reader.return_value = tail(live_row(1), live_row(2), live_row(3, sender='me'))
+                before = self.reader.call_count
+                current = self.tick(active)
+                self.assertEqual(self.reader.call_count, before + 1)
+                self.assertIsNone(current['result'])
+                self.assertEqual(self.cloud.call_count, 1)
+            finally:
+                release.set()
+            task.result(3)
+        # Join only the synthetic request worker, never a real model call.
+        worker = self.live._SESSIONS[self.cp._workspace(self.root, self.contacts)].get('model_worker')
+        if worker is not None:
+            worker.join(3)
+        self.assertIsNone(self.tick(active)['result'])
+        self.assertEqual(self.cloud.call_count, 1)
+
+    def test_stale_queued_work_does_not_consume_call_budget(self):
+        actions = []
+        self.launch.side_effect = lambda session, action: actions.append(action)
+        active = self.start_live()
+        self.new_peer(active)
+        self.assertEqual(len(actions), 1)
+        self.reader.return_value = tail(live_row(1), live_row(2), live_row(3, sender='me'))
+        self.tick(active)
+        actions[0]()
+        state = self.tick(active)
+        self.assertEqual(state['calls_used'], 0)
+        self.assertIsNone(state['result'])
+        self.cloud.assert_not_called()
+
+    def test_async_model_result_arrives_once_and_stop_discards_late_completion(self):
+        self.launch.side_effect = self.real_launch
+        entered, release = threading.Event(), threading.Event()
+        def cloud(*args):
+            entered.set()
+            self.assertTrue(release.wait(5))
+            return copy.deepcopy(RESPONSE)
+        self.cloud.side_effect = cloud
+        active = self.start_live()
+        try:
+            result = self.new_peer(active)
+            self.assertTrue(entered.wait(2))
+            self.assertEqual(result['reason'], 'GENERATING')
+            self.assertEqual(self.tick(active)['calls_used'], 1)
+            with self.assertRaises(ai.AnalysisError):
+                self.start_live()
+        finally:
+            release.set()
+            self.live._SESSIONS[self.cp._workspace(self.root, self.contacts)]['model_worker'].join(3)
+        completed = self.tick(active)
+        self.assertIsNotNone(completed['result'])
+        self.assertEqual(self.cloud.call_count, 1)
+        release.clear(); entered.clear()
+        self.now[0] += 20
+        self.new_peer(active, 3)
+        self.assertTrue(entered.wait(2))
+        try:
+            self.stop(active)
+        finally:
+            release.set()
+            self.live._SESSIONS[self.cp._workspace(self.root, self.contacts)]['model_worker'].join(3)
+        self.assertEqual(self.tick(active)['state'], 'stopped')
+        self.assertIsNone(self.tick(active)['result'])
+
+    def test_async_new_peer_discards_old_result_and_preserves_pending_context(self):
+        self.launch.side_effect = self.real_launch
+        entered, release = threading.Event(), threading.Event()
+        def cloud(*args):
+            entered.set()
+            self.assertTrue(release.wait(5))
+            return copy.deepcopy(RESPONSE)
+        self.cloud.side_effect = cloud
+        active = self.start_live()
+        try:
+            self.new_peer(active)
+            self.assertTrue(entered.wait(2))
+            self.reader.return_value = tail(live_row(1), live_row(2), live_row(3))
+            self.tick(active)
+        finally:
+            release.set()
+            self.live._SESSIONS[self.cp._workspace(self.root, self.contacts)]['model_worker'].join(3)
+        self.assertIsNone(self.tick(active)['result'])
+        self.now[0] += 20
+        self.tick(active)
+        self.live._SESSIONS[self.cp._workspace(self.root, self.contacts)]['model_worker'].join(3)
+        texts = [row['text'] for row in self.cloud.call_args.args[2]['sample']]
+        self.assertIn('LIVE_SYNTHETIC_2', texts)
+        self.assertIn('LIVE_SYNTHETIC_3', texts)
+        self.assertEqual(self.cloud.call_count, 2)
+
     def test_singleflight_claim_and_stop_discard_inflight_cloud_result(self):
         active = self.start_live()
         self.reader.return_value = tail(live_row(1), live_row(2))
@@ -256,27 +380,54 @@ class CopilotLiveTests(CopilotFixture):
 
     def test_transport_uses_bounded_hidden_subprocess_and_safe_errors(self):
         transport = importlib.import_module('dashboard.copilot.read_transport')
-        response = subprocess.CompletedProcess([], 0, json.dumps(tail(live_row(1))).encode())
-        with mock.patch.object(transport.subprocess, 'run', return_value=response) as child:
+        def process(raw):
+            return mock.Mock(stdin=io.BytesIO(), stdout=io.BytesIO(raw), poll=lambda: None, wait=lambda **kw: 0)
+        response = process((json.dumps(tail(live_row(1))) + '\n').encode())
+        self.addCleanup(transport.release_reader)
+        with mock.patch.object(transport.subprocess, 'Popen', return_value=response) as child:
             value = transport.read_tail(self.bundle.name, None)
         self.assertEqual(value['identity'], 'a' * 64)
         self.assertFalse(child.call_args.kwargs['shell'])
-        self.assertLessEqual(child.call_args.kwargs['timeout'], 90)
+        self.assertEqual(child.call_args.args[0][-1], '--serve')
         self.assertEqual(child.call_args.kwargs['stderr'], subprocess.DEVNULL)
-        self.assertEqual(json.loads(child.call_args.kwargs['input']), {'bundle_id': self.bundle.name})
-        for bad in (b'PRIVATE_NOT_JSON', b'x' * (1024 * 1024 + 1), json.dumps({'ok': False, 'code': 'PRIVATE_SECRET'}).encode()):
-            with mock.patch.object(transport.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, bad)):
+        self.assertEqual(json.loads(response.stdin.getvalue()), {'bundle_id': self.bundle.name})
+        for bad in (b'PRIVATE_NOT_JSON\n', b'x' * (1024 * 1024 + 1),
+                    (json.dumps({'ok': False, 'code': 'PRIVATE_SECRET'}) + '\n').encode()):
+            with mock.patch.object(transport.subprocess, 'Popen', return_value=process(bad)):
                 with self.assertRaises(ai.AnalysisError) as caught:
                     transport.read_tail(self.bundle.name, None)
                 self.assertNotIn('PRIVATE_', str(caught.exception))
 
     def test_known_reader_error_code_survives_without_child_body(self):
         transport = importlib.import_module('dashboard.copilot.read_transport')
-        with mock.patch.object(transport.subprocess, 'run', return_value=subprocess.CompletedProcess(
-                [], 1, json.dumps({'ok': False, 'code': 'LIVE_KEY_UNAVAILABLE'}).encode())):
+        child = mock.Mock(stdin=io.BytesIO(), stdout=io.BytesIO(
+            (json.dumps({'ok': False, 'code': 'LIVE_KEY_UNAVAILABLE'}) + '\n').encode()),
+            poll=lambda: None, wait=lambda **kw: 0)
+        with mock.patch.object(transport.subprocess, 'Popen', return_value=child):
             with self.assertRaises(ai.AnalysisError) as caught:
                 transport.read_tail(self.bundle.name, None)
         self.assertEqual(getattr(caught.exception, 'code', None), 'LIVE_KEY_UNAVAILABLE')
+
+    def test_reader_process_is_reused_and_never_restarted_after_death(self):
+        import sys
+        transport = importlib.import_module('dashboard.copilot.read_transport')
+        original = subprocess.Popen
+        payload = json.dumps(tail(live_row(1)))
+        script = 'import sys\nfor line in sys.stdin:\n print(' + repr(payload) + ', flush=True)\n'
+        def synthetic_child(*args, **kwargs):
+            return original([sys.executable, '-u', '-c', script], **kwargs)
+        self.addCleanup(transport.release_reader)
+        with mock.patch.object(transport.subprocess, 'Popen', side_effect=synthetic_child) as spawn:
+            first = transport.read_tail(self.bundle.name, None)
+            second = transport.read_tail(self.bundle.name, first['cursor'])
+            self.assertEqual(first, second)
+            self.assertEqual(spawn.call_count, 1)
+            child = transport._WORKER.child
+            transport.release_reader(self.bundle.name)
+            child.wait(timeout=3)
+            with self.assertRaises(ai.AnalysisError):
+                transport.read_tail(self.bundle.name, first['cursor'])
+            self.assertEqual(spawn.call_count, 1)
 
     def test_redaction_expansion_stops_instead_of_sending_over_budget(self):
         self.payload['contact_display'] = '小明'
@@ -298,6 +449,27 @@ class CopilotLiveTests(CopilotFixture):
             return 'synthetic-test-key'
         with mock.patch.object(ai, '_unseal', side_effect=unseal):
             self.assertEqual(self.tick(active)['state'], 'stopped')
+        self.cloud.assert_not_called()
+
+    def test_binding_revoked_after_worker_guard_prevents_paid_claim(self):
+        queued = []
+        self.launch.side_effect = lambda session, action: queued.append(action)
+        active = self.start_live()
+        self.reader.return_value = tail(live_row(1), live_row(2))
+        self.tick(active)
+        self.now[0] += 3
+        self.tick(active)
+        original = self.live._guard
+        def revoke_after_guard(*args, **kwargs):
+            result = original(*args, **kwargs)
+            self.cp.binding_observe(self.root, self.contacts,
+                {**self.observation, 'seq': 2, 'state': 'unavailable'})
+            return result
+        with mock.patch.object(self.live, '_guard', side_effect=revoke_after_guard):
+            queued[0]()
+        result = self.tick(active)
+        self.assertEqual(result['state'], 'stopped')
+        self.assertEqual(result['calls_used'], 0)
         self.cloud.assert_not_called()
 
     def test_malformed_tail_or_reader_failure_stops_before_any_call(self):

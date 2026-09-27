@@ -2,7 +2,7 @@
 (() => {
   'use strict';
   const $ = (id) => document.getElementById(id);
-  const POLL_MS = 5000;
+  const POLL_MS = 2000;
   const reasons = {
     CALL_FAILED_POSSIBLY_CHARGED: '模型请求未完成，可能已计费。本次已停止，不会自动重试。',
     SESSION_EXPIRED: '本次 15 分钟授权已到期，请重新核对后开启。',
@@ -144,6 +144,8 @@
       session = value;
       const minutes = Math.ceil(value.remaining_seconds / 60);
       const phase = value.state === 'exhausted' ? '调用上限已用完，最后建议可能过时'
+        : value.reason === 'GENERATING' ? '正在生成建议 · 继续检查新文字'
+        : value.reason === 'NEW_TEXT' ? '检测到新文字 · 旧建议已失效'
         : value.state === 'busy' ? '本机读取忙，等待下一轮' : value.result ? '建议已更新' : '等待新消息';
       statusText = `${phase} · 剩余约 ${minutes} 分钟 · 已尝试 ${value.calls_used} / 6 次`;
       if (value.result === null) clear();
@@ -181,7 +183,6 @@
           if (epoch === generation) { invalidate(); changed(); }
           return;
         }
-        statusText = '正在检查新文字；读取与生成期间不会重复启动。'; changed();
         const value = await host.request('/api/copilot/live/tick', {
           session_id: id, binding_token: token, binding_revision: host.revision(),
         });

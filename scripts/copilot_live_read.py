@@ -15,10 +15,12 @@ import importlib.util
 import json
 import math
 import os
+import queue
 from pathlib import Path
 import re
 import stat
 import sys
+import threading
 import time
 
 MAX_ROWS = 200
@@ -64,10 +66,14 @@ def _check_request(bundle_id, previous):
             or any(ord(c) < 32 for c in bundle_id)):
         raise LiveReadError('LIVE_INVALID_REQUEST')
     if previous is not None and (
-        not isinstance(previous, dict) or set(previous) != {'version', 'identity', 'digest'}
-        or type(previous.get('version')) is not int or previous['version'] != 1
+        not isinstance(previous, dict)
+        or type(previous.get('version')) is not int or previous['version'] not in (1, 2)
+        or set(previous) != ({'version', 'identity', 'digest', 'source_digest'} if previous['version'] == 2
+                             else {'version', 'identity', 'digest'})
         or not isinstance(previous.get('identity'), str) or not HEX64.fullmatch(previous['identity'])
         or not isinstance(previous.get('digest'), str) or not HEX64.fullmatch(previous['digest'])
+        or (previous['version'] == 2 and (not isinstance(previous.get('source_digest'), str)
+                                          or not HEX64.fullmatch(previous['source_digest'])))
     ):
         raise LiveReadError('LIVE_INVALID_REQUEST')
 
@@ -279,7 +285,31 @@ def _recent_rows(sync, reader, records, peer, account, deadline):
     return [{key: row[key] for key in ('id', 'server_id', 'timestamp', 'sender', 'text')} for row in candidates]
 
 
-def read_contact(project_root: Path, bundle_id: str, previous: dict | None = None) -> dict:
+def _source_digest(sync, records, deadline, snapshots=None):
+    """Opaque byte-verified source marker, never a timestamp-only freshness claim.
+
+    Only message shards enter this marker. Paths/keys never leave the worker.
+    A full read uses fingerprints captured by its verified private snapshots;
+    a later idle check rehashes source DB/WAL/SHM without copying or decoding.
+    """
+    shards = [record for record in records if SHARD_NAME.fullmatch(str(record.get('name') or ''))]
+    if not shards or len(shards) > MAX_SHARDS:
+        raise LiveReadError('LIVE_SOURCE_UNAVAILABLE')
+    markers = []
+    for record in shards:
+        _deadline(deadline)
+        source = Path(record['path']).resolve(strict=True)
+        active = sync._ACTIVE_DATABASE_SNAPSHOTS.get()
+        fingerprint = (snapshots.fingerprints[source] if snapshots is not None
+                       else active.source_fingerprint(source) if hasattr(active, 'source_fingerprint')
+                       else sync._stable_database_fingerprint(source))
+        markers.append([sync._source_partition_token(record), fingerprint])
+    _deadline(deadline)
+    return hashlib.sha256(json.dumps(sorted(markers, key=lambda item: item[0]),
+                                    sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+
+
+def read_contact(project_root: Path, bundle_id: str, previous: dict | None = None, *, runtime=None) -> dict:
     """Read a full recent tail; previous is an identity guard, never authority.
 
     Consumers must detect lost overlap/gaps and fence results on authorization
@@ -288,9 +318,10 @@ def read_contact(project_root: Path, bundle_id: str, previous: dict | None = Non
     _check_request(bundle_id, previous)
     try:
         root = Path(project_root).resolve(strict=True)
-        sync = _load_sync(root)
+        sync = runtime.sync if runtime is not None else _load_sync(root)
         deadline = time.monotonic() + min(90, max(1, READ_TIMEOUT_SECONDS))
-        with sync._exclusive_sync_lock(), sync._database_snapshot_scope():
+        scope = runtime.snapshots.scope if runtime is not None else sync._database_snapshot_scope
+        with sync._exclusive_sync_lock(), scope() as snapshots:
             readiness = sync.inspect_runtime()
             if not readiness.get('ready') or readiness.get('version') != '1.5.0':
                 raise LiveReadError('LIVE_SOURCE_UNAVAILABLE')
@@ -299,16 +330,28 @@ def read_contact(project_root: Path, bundle_id: str, previous: dict | None = Non
             if previous is not None and previous['identity'] != identity:
                 raise LiveReadError('LIVE_IDENTITY_CHANGED')
             reader, records = sync._database_records(account, cache_only=True, rescan=False, allow_process_hook=False)
-            rows = _recent_rows(sync, reader, records, peer, account, deadline)
+            unchanged = False
+            if previous is not None and previous['version'] == 2:
+                source_digest = _source_digest(sync, records, deadline)
+                unchanged = source_digest == previous['source_digest']
+            if unchanged:
+                rows = []
+            else:
+                rows = _recent_rows(sync, reader, records, peer, account, deadline)
+                source_digest = _source_digest(sync, records, deadline, snapshots)
             _deadline(deadline)
             current_account, _ = sync.discover_unique_account()
             if current_account != account or _identity(root, bundle_id, sync, current_account) != (peer, identity):
                 raise LiveReadError('LIVE_IDENTITY_CHANGED')
             _deadline(deadline)
-            digest = hashlib.sha256(json.dumps(rows, ensure_ascii=False, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
-            return {'identity': identity, 'rows': rows,
-                    'cursor': {'version': 1, 'identity': identity, 'digest': digest},
-                    'observed_at': datetime.now(timezone.utc).isoformat()}
+            digest = (previous['digest'] if unchanged else hashlib.sha256(json.dumps(
+                rows, ensure_ascii=False, sort_keys=True, separators=(',', ':')).encode()).hexdigest())
+            result = {'identity': identity, 'rows': rows,
+                      'cursor': {'version': 2, 'identity': identity, 'digest': digest, 'source_digest': source_digest},
+                      'observed_at': datetime.now(timezone.utc).isoformat()}
+            if unchanged:
+                result['unchanged'] = True
+            return result
     except LiveReadError:
         raise
     except Exception as exc:
@@ -345,9 +388,18 @@ def _private_stdio():
         os.close(null)
 
 
-def main() -> int:
+class ReaderRuntime:
+    def __init__(self, root):
+        from copilot_snapshot_cache import SnapshotCache
+        self.sync = _load_sync(root)
+        self.snapshots = SnapshotCache(self.sync)
+
+    def close(self):
+        self.snapshots.close()
+
+
+def _response(raw, runtime=None):
     try:
-        raw = sys.stdin.read(16385)
         if len(raw) > 16384:
             raise LiveReadError('LIVE_INVALID_REQUEST')
         try:
@@ -358,17 +410,69 @@ def main() -> int:
             raise LiveReadError('LIVE_INVALID_REQUEST')
         _check_request(request['bundle_id'], request.get('previous'))
         with _private_stdio():
-            result = read_contact(Path(__file__).resolve().parents[1], request['bundle_id'], request.get('previous'))
+            result = read_contact(Path(__file__).resolve().parents[1], request['bundle_id'], request.get('previous'), runtime=runtime)
         response = {'ok': True, **result}
         code = 0
     except Exception as exc:
         response = {'ok': False, 'code': exc.code if isinstance(exc, LiveReadError) else 'LIVE_READ_FAILED'}
         code = 1
-    print(json.dumps(response, ensure_ascii=False, separators=(',', ':')))
+    return response, code
+
+
+def main() -> int:
+    response, code = _response(sys.stdin.read(16385))
+    print(json.dumps(response, ensure_ascii=False, separators=(',', ':')), flush=True)
     return code
+
+
+def serve() -> int:
+    """Private pipe only. Idle EOF/30 s and 15 minute lifetime release copies."""
+    pending = queue.Queue(maxsize=1)
+    def receive():
+        while True:
+            raw = sys.stdin.readline(16385)
+            pending.put(raw)
+            if not raw or len(raw) > 16384:
+                return
+    threading.Thread(target=receive, name='copilot-input', daemon=True).start()
+    runtime = None
+    bound = None
+    expires = time.monotonic() + 900
+    try:
+        while time.monotonic() < expires:
+            try:
+                raw = pending.get(timeout=min(30, max(.01, expires - time.monotonic())))
+            except queue.Empty:
+                return 0
+            if not raw:
+                return 0
+            try:
+                if len(raw) > 16384:
+                    raise LiveReadError('LIVE_INVALID_REQUEST')
+                request = json.loads(raw)
+                if not isinstance(request, dict) or set(request) - {'bundle_id', 'previous'}:
+                    raise LiveReadError('LIVE_INVALID_REQUEST')
+                _check_request(request.get('bundle_id'), request.get('previous'))
+                if bound is not None and request['bundle_id'] != bound:
+                    raise LiveReadError('LIVE_IDENTITY_CHANGED')
+                bound = request['bundle_id']
+                if runtime is None:
+                    with _private_stdio():
+                        runtime = ReaderRuntime(Path(__file__).resolve().parents[1])
+                response, code = _response(raw, runtime)
+            except Exception as exc:
+                response, code = {'ok': False, 'code': exc.code if isinstance(exc, LiveReadError) else 'LIVE_READ_FAILED'}, 1
+            print(json.dumps(response, ensure_ascii=False, separators=(',', ':')), flush=True)
+            if code:
+                return code
+        return 0
+    finally:
+        if runtime is not None:
+            with _private_stdio():
+                runtime.close()
 
 
 if __name__ == '__main__':
     sys.stdout.reconfigure(encoding='utf-8')
     sys.stderr.reconfigure(encoding='utf-8')
-    raise SystemExit(main())
+    raise SystemExit(serve() if sys.argv[1:] == ['--serve'] else main())

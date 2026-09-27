@@ -420,6 +420,26 @@ class CopilotBrowserTests(unittest.TestCase):
         self.expect(self.page.locator('#compact-suggestion')).to_be_hidden()
         self.assertEqual(self.page.evaluate('localStorage.length'), 0)
 
+    def test_reading_continues_while_generating_and_status_stays_quiet(self):
+        self.hold_live_tick = True
+        self.live_start()
+        self.page.wait_for_timeout(2300)
+        self.assertIsNotNone(self.pending_live_tick)
+        route, response = self.pending_live_tick
+        response['reason'] = 'GENERATING'
+        self.reply(route, response)
+        self.expect(self.page.locator('#live-status')).to_contain_text('继续检查新文字')
+        self.page.wait_for_timeout(2300)
+        self.assertGreaterEqual(len([path for path, _ in self.writes if path.endswith('/live/tick')]), 2)
+        self.expect(self.page.locator('#live-status')).to_contain_text('继续检查新文字')
+        route, response = self.pending_live_tick
+        response['reason'] = 'NEW_TEXT'
+        self.reply(route, response)
+        self.expect(self.page.locator('#live-status')).to_contain_text('旧建议已失效')
+        self.assertFalse(any(call[0] == 'size' for call in self.page.evaluate('bridgeCalls')))
+        self.page.locator('#live-stop').click()
+        self.expect(self.page.locator('#compact-suggestion')).to_be_hidden()
+
     def test_live_tick_failure_does_not_retry_or_echo_reader_error(self):
         self.fail_live_tick = True
         self.live_start()

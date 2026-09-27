@@ -395,7 +395,10 @@
       feedback(recipient.configured ? '本机核对完成。确认范围、接收方与全部调用计划后，勾选单次授权开始分析。' : '范围已核对，尚未发送。需要配置模型连接才能继续。');
       step('confirm'); canRun();
       const remaining = new Date(response.expires_at).getTime() - Date.now();
-      expiryTimer = setTimeout(() => { if (!busy && preview) { invalidate(); feedback('核对结果已过期，请重新核对范围。'); } }, Number.isFinite(remaining) ? Math.max(0, remaining) : 600000);
+      // Bound the timer to the preview's ten-minute lifetime, including clock skew.
+      // Large browser delays overflow a signed 32-bit integer and expire immediately.
+      const expiryDelay = Number.isFinite(remaining) ? Math.min(600000, Math.max(0, remaining)) : 600000;
+      expiryTimer = setTimeout(() => { if (!busy && preview) { invalidate(); feedback('核对结果已过期，请重新核对范围。'); } }, expiryDelay);
     } catch (error) { if (requested === revision) feedback(error.message, true); }
     finally { $('#ai-preview-button').disabled = !canPreview(); $('#ai-recheck-partial').disabled = !canPreview(); }
   });
