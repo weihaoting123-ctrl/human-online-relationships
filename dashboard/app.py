@@ -1060,8 +1060,13 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.send_response(status)
         self._security_headers()
         self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.end_headers()
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+            # Navigation can close the client mid-response. Do not turn that
+            # transport failure into another JSON response on the same socket.
+            self.close_connection = True
 
     def _error(self, status, message):
         self._json({"status": "error", "error": str(message)}, status)

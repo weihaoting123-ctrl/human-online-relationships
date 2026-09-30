@@ -14,6 +14,53 @@ from unittest import mock
 from dashboard import app
 
 
+class DashboardResponseTransportTests(unittest.TestCase):
+    def handler(self):
+        handler = object.__new__(app.DashboardHandler)
+        handler.send_response = mock.Mock()
+        handler._security_headers = mock.Mock()
+        handler.send_header = mock.Mock()
+        handler.end_headers = mock.Mock()
+        handler.wfile = mock.Mock()
+        handler.close_connection = False
+        return handler
+
+    def test_disconnected_json_client_is_closed_without_a_second_response(self):
+        for error in (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+            for phase in ("headers", "body"):
+                with self.subTest(error=error.__name__, phase=phase):
+                    handler = self.handler()
+                    target = handler.end_headers if phase == "headers" else handler.wfile.write
+                    target.side_effect = error("synthetic client disconnect")
+                    handler._json({"status": "ok"})
+                    self.assertTrue(handler.close_connection)
+                    handler.send_response.assert_called_once_with(HTTPStatus.OK)
+                    if phase == "headers":
+                        handler.wfile.write.assert_not_called()
+
+    def test_other_write_errors_and_invalid_payloads_are_not_suppressed(self):
+        handler = self.handler()
+        handler.wfile.write.side_effect = OSError("synthetic non-transport failure")
+        with self.assertRaises(OSError):
+            handler._json({"status": "ok"})
+        self.assertFalse(handler.close_connection)
+        handler = self.handler()
+        with self.assertRaises(TypeError):
+            handler._json({"not_json": object()})
+        handler.send_response.assert_not_called()
+
+    def test_successful_json_keeps_framing_and_security_headers(self):
+        handler = self.handler()
+        payload = {"status": "ok", "label": "合成测试"}
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        handler._json(payload)
+        handler._security_headers.assert_called_once_with()
+        handler.send_header.assert_called_once_with("Content-Length", str(len(body)))
+        handler.end_headers.assert_called_once_with()
+        handler.wfile.write.assert_called_once_with(body)
+        self.assertFalse(handler.close_connection)
+
+
 class DashboardServiceTests(unittest.TestCase):
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
