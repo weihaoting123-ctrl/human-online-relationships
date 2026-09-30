@@ -11,6 +11,20 @@ from tests.test_copilot_service import CopilotFixture, RESPONSE
 
 
 class CopilotApiTests(CopilotFixture):
+    def test_focus_routes_keep_origin_auth_and_bounded_request_guards(self):
+        body = {'session_id': 'f' * 48, 'binding_token': 'a' * 48, 'binding_revision': 7}
+        for action in ('suspend', 'resume'):
+            path = '/api/copilot/live/' + action
+            with self.subTest(action=action), mock.patch.object(app.copilot_live, action,
+                    create=True, return_value={'status': 'ok', 'state': 'suspended'}) as operation:
+                self.assertEqual(self.http(path, body, **{'X-Local-Token': None})[0], 403)
+                self.assertEqual(self.http(path, body, Origin='https://evil.invalid')[0], 403)
+                operation.assert_not_called()
+                self.assertEqual(self.http(path + '?extra=1', body)[0], 400)
+                operation.assert_not_called()
+                self.assertEqual(self.http(path, body)[0], 200)
+                operation.assert_called_once()
+
     def setUp(self):
         super().setUp()
         self.net.stop()

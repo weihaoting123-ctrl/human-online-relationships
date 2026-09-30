@@ -171,13 +171,30 @@ atexit.register(release_reader)
 
 def read_tail(bundle_id, previous):
     """One fixed private worker per grant. Death/error never silently restarts it."""
+    return _read(bundle_id, previous)
+
+
+def resume_tail(bundle_id, previous):
+    """Explicit focus-resume only: retain cursor identity, never a new baseline.
+
+    Only the live service may call this after revalidating a suspended grant.
+    Normal read failures continue to terminate and cannot take this path.
+    """
+    if previous is None:
+        raise LiveReadError('LIVE_INVALID_REQUEST')
+    return _read(bundle_id, previous, resuming=True)
+
+
+def _read(bundle_id, previous, *, resuming=False):
     global _WORKER
     if not _READ_LOCK.acquire(blocking=False):
         raise LiveReadError('LIVE_BUSY')
     worker = None
     try:
         with _STATE_LOCK:
-            if previous is None:
+            if resuming and _WORKER is not None:
+                raise LiveReadError('LIVE_BUSY')
+            if previous is None or resuming:
                 if _WORKER is not None:
                     _WORKER.close()
                 _WORKER = _ReaderWorker(bundle_id)

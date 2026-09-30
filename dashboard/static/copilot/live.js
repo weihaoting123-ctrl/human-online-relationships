@@ -39,7 +39,8 @@
     LIVE_DECODE_FAILED: '本机文字解码未完成，已停止，不发送不确定内容。',
   };
   window.CopilotLive = Object.freeze({ create(host) {
-    let preview = null, session = null, generation = 0, timer = null;
+    let preview = null, session = null, generation = 0, timer = null, focusExpiry = null;
+    let focusPaused = false, pauseTask = null, resuming = false, resumeRequest = null;
     let preparing = false, starting = false, ticking = false, resultId = '';
     let statusText = '默认关闭。先识别标题、核对固定会话，再开启限时辅助。';
     const blocked = () => Boolean(preview || session || preparing || starting || ticking);
@@ -66,6 +67,8 @@
       const wasOpen = blocked(), id = session?.session_id;
       generation += 1;
       window.clearTimeout(timer); timer = null;
+      window.clearTimeout(focusExpiry); focusExpiry = null;
+      focusPaused = false; pauseTask = null; resuming = false; resumeRequest = null;
       preview = null; session = null; preparing = false; starting = false;
       $('live-consent').hidden = true;
       $('live-confirmed').checked = false;
@@ -86,6 +89,7 @@
         && value.binding_required === true
         && value.scope && ['bundle_id', 'date_from', 'date_to', 'max_messages', 'direction']
           .every((key) => value.scope[key] === scope[key])
+        && window.CopilotStyle.matches(value.scope.reply_style, scope.reply_style)
         && value.recipient?.configured === true
         && ['provider', 'model', 'endpoint'].every((key) => typeof value.recipient[key] === 'string')
         && value.limits?.duration_seconds === 900 && value.limits.max_calls === 6
@@ -100,6 +104,7 @@
         dt.textContent = label; dd.textContent = text; facts.append(dt, dd);
       };
       add('固定会话', host.name());
+      add('回复风格', window.CopilotStyle.describe(value.scope.reply_style));
       add('历史上下文', `${value.scope.date_from} 至 ${value.scope.date_to} · ${value.counts.sample_messages} 条 / ${value.counts.sample_chars} 字符`);
       add('新文字范围', '本次基线之后、授权到期之前，这一个来源的新文字；可跨午夜，不延长授权。');
       add('接收方', `${value.recipient.provider.slice(0, 80)} · ${value.recipient.model.slice(0, 120)}`);
@@ -131,7 +136,7 @@
     }
     function accept(value) {
       if (!value || !/^[a-f0-9]{48}$/.test(value.session_id || '')
-        || !['active', 'busy', 'exhausted', 'stopped'].includes(value.state)
+        || !['active', 'busy', 'exhausted', 'stopped', 'suspended'].includes(value.state)
         || value.binding_revision !== host.revision()
         || !Number.isInteger(value.calls_used) || value.calls_used < 0 || value.calls_used > 6
         || !Number.isInteger(value.calls_remaining) || value.calls_remaining < 0 || value.calls_remaining > 6
@@ -143,7 +148,8 @@
       }
       session = value;
       const minutes = Math.ceil(value.remaining_seconds / 60);
-      const phase = value.state === 'exhausted' ? '调用上限已用完，最后建议可能过时'
+      const phase = value.state === 'suspended' ? '切屏暂停 · 回到原会话后核验恢复，不延长授权'
+        : value.state === 'exhausted' ? '调用上限已用完，最后建议可能过时'
         : value.reason === 'GENERATING' ? '正在生成建议 · 继续检查新文字'
         : value.reason === 'NEW_TEXT' ? '检测到新文字 · 旧建议已失效'
         : value.state === 'busy' ? '本机读取忙，等待下一轮' : value.result ? '建议已更新' : '等待新消息';
@@ -156,7 +162,64 @@
         }
       }
       changed();
-      timer = window.setTimeout(tick, POLL_MS);
+      window.clearTimeout(timer);
+      window.clearTimeout(focusExpiry);
+      if (focusPaused || value.state === 'suspended') {
+        focusExpiry = window.setTimeout(() => { invalidate(reasons.SESSION_EXPIRED); changed(); }, value.remaining_seconds * 1000);
+      } else timer = window.setTimeout(tick, POLL_MS);
+    }
+    function suspend() {
+      if (focusPaused && session && !resuming) return true;
+      if (!session || starting) return false;
+      const id = session.session_id, token = host.scope().binding_token;
+      focusPaused = true;
+      const epoch = ++generation;
+      const precedingResume = resumeRequest;
+      const precedingObservations = host.settled?.();
+      resuming = false; resumeRequest = null;
+      window.clearTimeout(timer); timer = null;
+      clear();
+      statusText = '切屏暂停 · 不读取新文字、不发起模型请求；原授权时间继续倒计时。';
+      changed();
+      // If focus changes again during a resume request, let that bounded read
+      // finish, then fence it. Its stale response cannot schedule a new tick.
+      pauseTask = Promise.all([precedingResume, precedingObservations]).then(() => {
+        if (epoch !== generation) return null;
+        return host.request('/api/copilot/live/suspend', {
+          session_id: id, binding_token: token, binding_revision: host.revision(),
+        });
+      }).then((value) => {
+        if (epoch !== generation) return;
+        if (!['suspended', 'stopped'].includes(value?.state)) throw new Error('invalid-focus-fence');
+        accept(value);
+      })
+        .catch(() => { if (epoch === generation) fail(); });
+      return true;
+    }
+    async function resume() {
+      if (!focusPaused || !session || resuming) return;
+      const epoch = generation;
+      resuming = true;
+      try {
+        await pauseTask;
+        if (epoch !== generation || !session || !focusPaused) return;
+        const id = session.session_id, token = host.scope().binding_token;
+        if (!eligible() || !await host.fresh(token) || epoch !== generation) {
+          if (epoch === generation) { invalidate(); changed(); }
+          return;
+        }
+        resumeRequest = host.request('/api/copilot/live/resume', {
+          session_id: id, binding_token: token, binding_revision: host.revision(),
+        });
+        const value = await resumeRequest;
+        if (epoch !== generation) return;
+        if (value.state !== 'suspended') focusPaused = false;
+        accept(value);
+        // Waiting for already in-flight local/model work does not start or
+        // repeat a cloud call. Unknown failures terminate via accept/fail.
+        if (session && focusPaused) timer = window.setTimeout(resume, POLL_MS);
+      } catch (_) { if (epoch === generation) fail(); }
+      finally { if (epoch === generation) { resuming = false; resumeRequest = null; } changed(); }
     }
     async function start() {
       if (!preview || !eligible() || starting || !$('live-confirmed').checked) return;
@@ -175,7 +238,7 @@
       finally { if (epoch === generation) starting = false; changed(); }
     }
     async function tick() {
-      if (!session || ticking) return;
+      if (!session || ticking || focusPaused) return;
       const epoch = generation, id = session.session_id, token = host.scope().binding_token;
       ticking = true;
       try {
@@ -199,6 +262,6 @@
     }
     window.addEventListener('beforeunload', () => invalidate());
     render();
-    return Object.freeze({ render, invalidate, blocked });
+    return Object.freeze({ render, invalidate, blocked, suspend, resume, suspended: () => focusPaused });
   }});
 })();

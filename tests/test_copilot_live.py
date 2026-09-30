@@ -27,7 +27,7 @@ def tail(*rows, identity='a' * 64):
             'observed_at': '2026-09-24T12:01:00'}
 
 
-class CopilotLiveTests(CopilotFixture):
+class CopilotLiveFixture(CopilotFixture):
     def setUp(self):
         super().setUp()
         self.assertIsNotNone(importlib.util.find_spec('dashboard.copilot.live'),
@@ -82,6 +82,7 @@ class CopilotLiveTests(CopilotFixture):
         self.now[0] += 3
         return self.tick(session)
 
+class CopilotLiveTests(CopilotLiveFixture):
     def test_preview_is_bounded_metadata_without_live_reader_or_cloud(self):
         prepared = self.preview_live()
         self.assertEqual(prepared['limits']['max_calls'], 6)

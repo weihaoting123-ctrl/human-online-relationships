@@ -158,7 +158,24 @@ class BindingRegistry:
                            'bundle_id': result['bundle_id'], 'fingerprint': fingerprint}
                 session['binding'] = current
             current['expires'] = now + BINDING_TTL
+            current['suspended'] = False
             return {**result, 'binding_token': current['token'], 'observation_seq': seq}
+
+    def suspend(self, workspace, token, bundle_id, metadata_reader, *, expected, remaining_seconds):
+        """Disable a live grant's binding until a new exact observation arrives.
+
+        The live service supplies its remaining original lifetime. Bump generation
+        so ordinary one-shot previews created before losing focus stay revoked.
+        Neither this method nor suspended bindings can authorize a paid claim.
+        """
+        with self.lock:
+            frozen = self.validate(workspace, token, bundle_id, metadata_reader, expected=expected)
+            if not isinstance(remaining_seconds, (int, float)) or not 0 < remaining_seconds <= 900:
+                raise ai.AnalysisError(STALE_BINDING)
+            session = self.sessions[workspace]
+            session['generation'] += 1
+            session['binding'].update(suspended=True, expires=self.clock() + remaining_seconds)
+            return {**frozen, 'generation': session['generation']}
 
     def validate(self, workspace, token, bundle_id, metadata_reader, *, expected=None):
         """Validate at preview and at the atomic send claim; never refresh TTL."""
@@ -168,7 +185,7 @@ class BindingRegistry:
             current = session['binding'] if session else None
             if (not isinstance(token, str) or not ai.ID_RE.fullmatch(token) or not current
                     or not secrets.compare_digest(token, current['token'])
-                    or current['bundle_id'] != bundle_id):
+                    or current['bundle_id'] != bundle_id or current.get('suspended')):
                 raise ai.AnalysisError(STALE_BINDING)
             try:
                 fingerprint = _fingerprint(metadata_reader())

@@ -166,6 +166,7 @@ def run(data_dir, contacts_dir, request, *, admission):
                                prepared['scope']['bundle_id'], expected=prepared['binding'])
     content = {'date_from': prepared['scope']['date_from'], 'date_to': prepared['scope']['date_to'],
                'direction': prepared['scope']['direction'], 'sample': prepared['sample'],
+               'reply_style': prepared['scope']['reply_style'],
                'latest_draft': prepared['latest_draft']}
     try:
         result = safe_result(ai._request_json(config, key, content, SYSTEM_PROMPT))
