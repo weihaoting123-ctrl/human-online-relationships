@@ -33,6 +33,7 @@ def stable_message(message_id, content, timestamp=1_700_000_000, **extra):
         "source_message_id": message_id,
         "source_message_id_kind": "server_id",
         "source_message_namespace": "weflow-cli",
+        "source_local_id_verified": True,
         "sender": "them",
         "timestamp": timestamp,
         "type": "text",
@@ -113,6 +114,259 @@ class PayloadMergeTests(unittest.TestCase):
         self.assertEqual(counts["stable_id_conflicts"], 1)
         self.assertEqual(counts["duplicates"], 1)
         self.assertEqual(merged["messages"][0]["content"], "old-version")
+        self.assertEqual(counts["source_content_conflicts"], 1)
+
+    def test_verified_same_partition_text_correction_preserves_derived_fields(self):
+        partition = message_merge.normalize_source_partition("synthetic-shard")
+        before = stable_message("server-1", "old-version", source_partition=partition,
+                                transcript="human checked", transcript_source="synthetic")
+        incoming = stable_message("server-1", "new-version", source_partition=partition)
+        merged, counts = merge_payloads(chat_payload([before]), chat_payload([incoming]),
+                                      authoritative_source_partitions=(partition,))
+        self.assertEqual(merged["messages"][0]["content"], "new-version")
+        self.assertEqual(merged["messages"][0]["transcript"], "human checked")
+        self.assertEqual(counts["updated"], 1)
+        self.assertEqual(counts["source_content_conflicts"], 0)
+        self.assertEqual(counts["duplicates"], 0)
+
+    def test_verified_update_rejects_other_partition_and_changed_source_identity(self):
+        partition = message_merge.normalize_source_partition("synthetic-shard")
+        other = message_merge.normalize_source_partition("other-shard")
+        before = stable_message("server-1", "old-version", source_partition=partition)
+        for change in ({"source_partition": other}, {"sender": "me"},
+                       {"timestamp": 1_700_000_001}, {"type": "voice"}, {"local_id": "other"}):
+            with self.subTest(change=change):
+                incoming = {**before, "content": "new-version", **change}
+                merged, counts = merge_payloads(chat_payload([before]), chat_payload([incoming]),
+                                              authoritative_source_partitions=(partition, other))
+                self.assertEqual(merged["messages"][0]["content"], "old-version")
+                self.assertEqual(counts["source_content_conflicts"], 1)
+                self.assertEqual(counts["updated"], 0)
+
+    def test_authoritative_update_does_not_pick_among_conflicting_incoming_variants(self):
+        partition = message_merge.normalize_source_partition("synthetic-shard")
+        before = stable_message("server-1", "old-version", source_partition=partition)
+        for variants in (("new-a", "new-b"), ("old-version", "new-b")):
+            incoming = [{**before, "content": value} for value in variants]
+            merged, counts = merge_payloads(chat_payload([before]), chat_payload(incoming),
+                                          authoritative_source_partitions=(partition,))
+            self.assertEqual(merged["messages"][0]["content"], "old-version")
+            self.assertGreater(counts["source_content_conflicts"], 0)
+            self.assertEqual(counts["updated"], 0)
+
+    def test_transcript_enrichment_does_not_count_as_source_content_conflict(self):
+        before = stable_message("server-1", "same")
+        merged, counts = merge_payloads(chat_payload([before]),
+                                      chat_payload([{**before, "transcript": "new metadata"}]))
+        self.assertEqual(counts["source_content_conflicts"], 0)
+        self.assertEqual(counts["enriched"], 1)
+
+    def test_rejected_source_cannot_supply_partition_proof_for_next_merge(self):
+        partition = message_merge.normalize_source_partition("synthetic-new-shard")
+        incoming = chat_payload([stable_message("server-1", "unverified new text",
+                                               source_partition=partition, local_type=1,
+                                               transcript="derived metadata")])
+        current = chat_payload([stable_message("server-1", "retained old text")])
+        for _pass in range(2):
+            current, counts = merge_payloads(
+                current, incoming, authoritative_source_partitions=(partition,))
+            row = current["messages"][0]
+            self.assertEqual(row["content"], "retained old text")
+            self.assertNotIn("source_partition", row)
+            self.assertNotIn("local_type", row)
+            self.assertEqual(row["transcript"], "derived metadata")
+            self.assertEqual(counts["updated"], 0)
+            self.assertEqual(counts["source_content_conflicts"], 1)
+
+    def test_compacted_conflicting_copy_cannot_supply_partition_proof(self):
+        partition = message_merge.normalize_source_partition("synthetic-new-shard")
+        rejected = stable_message("server-1", "unverified new text",
+                                  source_partition=partition)
+        current = chat_payload([stable_message("server-1", "retained old text"), rejected])
+        current, _counts = merge_payloads(current, chat_payload([]))
+        current, counts = merge_payloads(
+            current, chat_payload([rejected]), authoritative_source_partitions=(partition,))
+        self.assertEqual(current["messages"][0]["content"], "retained old text")
+        self.assertNotIn("source_partition", current["messages"][0])
+        self.assertEqual(counts["updated"], 0)
+        self.assertEqual(counts["source_content_conflicts"], 1)
+
+    def test_blank_source_content_cannot_manufacture_partition_proof(self):
+        partition = message_merge.normalize_source_partition("synthetic-new-shard")
+        current = chat_payload([stable_message("server-1", "")])
+        for text in ("first unverified text", "second unverified text"):
+            current, counts = merge_payloads(
+                current, chat_payload([stable_message("server-1", text,
+                                                     source_partition=partition)]),
+                authoritative_source_partitions=(partition,))
+            self.assertEqual(current["messages"][0]["content"], "")
+            self.assertNotIn("source_partition", current["messages"][0])
+            self.assertEqual(counts["updated"], 0)
+            self.assertEqual(counts["source_content_conflicts"], 1)
+
+    def test_verified_blank_text_correction_remains_supported(self):
+        partition = message_merge.normalize_source_partition("synthetic-shard")
+        before = stable_message("server-1", "", source_partition=partition, local_type=1)
+        after = {**before, "content": "verified text"}
+        current, counts = merge_payloads(
+            chat_payload([before]), chat_payload([after]),
+            authoritative_source_partitions=(partition,))
+        self.assertEqual(current["messages"][0]["content"], "verified text")
+        self.assertEqual(counts["updated"], 1)
+        self.assertEqual(counts["source_content_conflicts"], 0)
+
+    def test_rejected_source_cannot_supply_bundle_identity_for_next_merge(self):
+        partition = message_merge.normalize_source_partition("synthetic-shard")
+        before = stable_message("server-1", "retained old text", source_partition=partition)
+        after = {**before, "content": "unverified new text"}
+        incoming = chat_payload([after])
+        for identity_field in ("own_wxid", "contact_username"):
+            with self.subTest(identity_field=identity_field):
+                current = chat_payload([before])
+                current[identity_field] = "unknown"
+                for _pass in range(2):
+                    current, counts = merge_payloads(
+                        current, incoming, authoritative_source_partitions=(partition,))
+                    self.assertEqual(current[identity_field], "unknown")
+                    self.assertEqual(current["messages"][0]["content"], "retained old text")
+                    self.assertEqual(counts["updated"], 0)
+                    self.assertEqual(counts["source_content_conflicts"], 1)
+
+    def test_synthesized_local_row_id_cannot_become_authority_on_later_merge(self):
+        partition = message_merge.normalize_source_partition("synthetic-shard")
+        before = stable_message("server-1", "retained old text", source_partition=partition)
+        del before["local_id"]
+        incoming = chat_payload([stable_message("server-1", "unverified new text",
+                                               source_partition=partition, local_id=1)])
+        current = chat_payload([before])
+        for _pass in range(2):
+            current, counts = merge_payloads(
+                current, incoming, authoritative_source_partitions=(partition,))
+            self.assertEqual(current["messages"][0]["content"], "retained old text")
+            self.assertIs(current["messages"][0]["source_local_id_unverified"], True)
+            self.assertEqual(counts["updated"], 0)
+            self.assertEqual(counts["source_content_conflicts"], 1)
+
+    def test_incoming_synthesized_local_row_id_does_not_authorize_correction(self):
+        partition = message_merge.normalize_source_partition("synthetic-shard")
+        before = stable_message("server-1", "retained old text",
+                                source_partition=partition, local_id=1)
+        incoming = {**before, "content": "unverified new text"}
+        del incoming["local_id"]
+        current, counts = merge_payloads(
+            chat_payload([before]), chat_payload([incoming]),
+            authoritative_source_partitions=(partition,))
+        self.assertEqual(current["messages"][0]["content"], "retained old text")
+        self.assertNotIn("source_local_id_unverified", current["messages"][0])
+        self.assertEqual(counts["updated"], 0)
+        self.assertEqual(counts["source_content_conflicts"], 1)
+
+    def test_explicit_upstream_local_id_remains_eligible_for_correction(self):
+        partition = message_merge.normalize_source_partition("synthetic-shard")
+        before = stable_message("server-1", "old text", source_partition=partition, localId=7)
+        del before["local_id"]
+        incoming = {**before, "content": "verified new text"}
+        current, counts = merge_payloads(
+            chat_payload([before]), chat_payload([incoming]),
+            authoritative_source_partitions=(partition,))
+        self.assertEqual(current["messages"][0]["content"], "verified new text")
+        self.assertNotIn("source_local_id_unverified", current["messages"][0])
+        self.assertEqual(counts["updated"], 1)
+        self.assertEqual(counts["source_content_conflicts"], 0)
+
+    def test_pre_normalized_synthetic_id_keeps_negative_proof(self):
+        partition = message_merge.normalize_source_partition("synthetic-shard")
+        before = stable_message("server-1", "retained old text", source_partition=partition)
+        del before["local_id"]
+        current = normalize_payload(chat_payload([before]))
+        incoming = chat_payload([stable_message("server-1", "unverified new text",
+                                               source_partition=partition, local_id=1)])
+        for _pass in range(2):
+            current, counts = merge_payloads(
+                current, incoming, authoritative_source_partitions=(partition,))
+            self.assertEqual(current["messages"][0]["content"], "retained old text")
+            self.assertIs(current["messages"][0]["source_local_id_unverified"], True)
+            self.assertEqual(counts["updated"], 0)
+
+    def test_negative_row_proof_does_not_change_fallback_deduplication(self):
+        existing = chat_payload([fallback_message(1)])
+        incoming = chat_payload([fallback_message(1, source_local_id_unverified=True)])
+        merged, counts = merge_payloads(existing, incoming)
+        self.assertEqual(counts["fingerprint_duplicates"], 1)
+        self.assertEqual(counts["added"], 0)
+        self.assertEqual(len(merged["messages"]), 1)
+
+    def test_legacy_normalized_row_conflict_cannot_self_upgrade(self):
+        partition = message_merge.normalize_source_partition("synthetic-shard")
+        before = stable_message("server-1", "retained old text",
+                                source_partition=partition, local_id=1, local_type=1)
+        del before["source_local_id_verified"]
+        incoming = chat_payload([{**before, "content": "unverified new text",
+                                  "source_local_id_verified": True}])
+        current = chat_payload([before])
+        for _pass in range(2):
+            current, counts = merge_payloads(
+                current, incoming, authoritative_source_partitions=(partition,))
+            self.assertEqual(current["messages"][0]["content"], "retained old text")
+            self.assertNotIn("source_local_id_verified", current["messages"][0])
+            self.assertEqual(counts["updated"], 0)
+            self.assertEqual(counts["source_content_conflicts"], 1)
+
+    def test_matching_nonempty_fresh_text_can_certify_legacy_row(self):
+        partition = message_merge.normalize_source_partition("synthetic-shard")
+        before = stable_message("server-1", "exact original text",
+                                source_partition=partition, local_id=1, local_type=1)
+        del before["source_local_id_verified"]
+        matching = chat_payload([{**before, "source_local_id_verified": True}])
+        current, counts = merge_payloads(
+            chat_payload([before]), matching, authoritative_source_partitions=(partition,))
+        self.assertIs(current["messages"][0]["source_local_id_verified"], True)
+        self.assertEqual(counts["updated"], 0)
+        self.assertEqual(counts["source_content_conflicts"], 0)
+        current, counts = merge_payloads(
+            current, chat_payload([{**matching["messages"][0], "content": "verified correction"}]),
+            authoritative_source_partitions=(partition,))
+        self.assertEqual(current["messages"][0]["content"], "verified correction")
+        self.assertEqual(counts["updated"], 1)
+
+    def test_blank_or_unbound_matching_text_cannot_certify_legacy_row(self):
+        partition = message_merge.normalize_source_partition("synthetic-shard")
+        for text, bound in (("", True), ("matching text", False)):
+            with self.subTest(text=text, bound=bound):
+                before = stable_message("server-1", text, local_id=1, local_type=1)
+                del before["source_local_id_verified"]
+                if bound:
+                    before["source_partition"] = partition
+                fresh = {**before, "source_partition": partition, "source_local_id_verified": True}
+                current, _counts = merge_payloads(
+                    chat_payload([before]), chat_payload([fresh]),
+                    authoritative_source_partitions=(partition,))
+                self.assertNotIn("source_local_id_verified", current["messages"][0])
+
+    def test_authoritative_preflight_requires_all_source_fields_and_proof_to_agree(self):
+        partition = message_merge.normalize_source_partition("synthetic-shard")
+        before = stable_message("server-1", "retained old text", local_type=1,
+                                source_partition=partition)
+        complete = {**before, "content": "unverified new text"}
+        for change in ({"local_type": None}, {"source_partition": None},
+                       {"source_local_id_verified": False}):
+            with self.subTest(change=change):
+                variant = {**complete, **change}
+                current, counts = merge_payloads(
+                    chat_payload([before]), chat_payload([complete, variant]),
+                    authoritative_source_partitions=(partition,))
+                self.assertEqual(current["messages"][0]["content"], "retained old text")
+                self.assertEqual(counts["updated"], 0)
+                self.assertGreater(counts["source_content_conflicts"], 0)
+
+    def test_unknown_sender_variant_fails_closed_before_authoritative_merge(self):
+        partition = message_merge.normalize_source_partition("synthetic-shard")
+        before = stable_message("server-1", "retained old text", source_partition=partition)
+        complete = {**before, "content": "unverified new text"}
+        with self.assertRaises(ValueError):
+            merge_payloads(chat_payload([before]),
+                           chat_payload([complete, {**complete, "sender": "unknown"}]),
+                           authoritative_source_partitions=(partition,))
 
     def test_existing_stable_duplicates_are_compacted(self):
         existing = chat_payload([
@@ -405,6 +659,17 @@ class BundleStorageTests(unittest.TestCase):
 
 
 class WeflowIdentityTests(unittest.TestCase):
+    def test_converter_marks_synthetic_local_row_before_normalization(self):
+        raw = {"serverId": "server-1", "localType": 1,
+               "createTime": 1_700_000_000, "isSend": 0, "parsedContent": "body"}
+        converted = convert_weflow_cli_payload([raw], "contact", "wxid_friend")
+        row = normalize_payload(converted)["messages"][0]
+        self.assertEqual(row["local_id"], 1)
+        self.assertIs(row["source_local_id_unverified"], True)
+        explicit = convert_weflow_cli_payload([{**raw, "localId": 7}], "contact", "wxid_friend")
+        self.assertEqual(explicit["messages"][0]["local_id"], 7)
+        self.assertNotIn("source_local_id_unverified", explicit["messages"][0])
+
     def test_converter_prefers_server_id_and_marks_namespace(self):
         converted = convert_weflow_cli_payload([{
             "serverId": "server-1",

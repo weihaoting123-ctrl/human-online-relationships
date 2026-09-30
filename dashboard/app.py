@@ -121,6 +121,7 @@ SYNC_ERROR_CODES = {
     "account_selection_required",
     "exporter_not_ready",
     "invalid_status",
+    "message_conflicts",
     "permission_required",
     "sync_failed",
     "wechat_not_running",
@@ -130,6 +131,8 @@ SYNC_COUNT_FIELDS = (
     "imported_conversations",
     "failed_conversations",
     "imported_messages",
+    "updated_messages",
+    "conflicted_messages",
     "deduplicated_messages",
     "unchanged_messages",
     "skipped_databases",
@@ -664,6 +667,7 @@ def sync_status():
             "error",
         }
         or counts["failed_conversations"] > 0
+        or counts["conflicted_messages"] > 0
     )
     return {
         "enabled": payload.get("enabled") is True,
@@ -719,6 +723,10 @@ def archive_status():
             } else None
         if label == "media":
             result[label]["refreshing"] = raw.get("media_refresh_state") == "running"
+            code = raw.get("error_code")
+            result[label]["error_code"] = code if isinstance(code, str) and code in {
+                "media_account_binding_required", "needs_account_selection",
+            } else None
     return result
 
 
@@ -1143,9 +1151,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 if path == "/api/ai/config":
                     return self._json(scoped_ai.config_status(DATA_DIR))
                 if path == "/api/ai/history":
-                    return self._json(scoped_ai.history(DATA_DIR))
+                    return self._json(scoped_ai.history(DATA_DIR, **scoped_ai.history_request(parsed.query)))
                 if path == "/api/ai/jobs":
-                    return self._json(scoped_ai.jobs(DATA_DIR))
+                    return self._json(scoped_ai.jobs(DATA_DIR, **scoped_ai.history_request(parsed.query, default_limit=20)))
                 if path == "/api/backup/status":
                     return self._json(backup_status())
                 if path == "/api/backup/history":

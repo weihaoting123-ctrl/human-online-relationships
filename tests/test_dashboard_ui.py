@@ -145,6 +145,10 @@ class DashboardBrowserTests(unittest.TestCase):
                      if message.type == "error" else None)
         self.page.on("request", lambda request: self.requests.append((request.method, request.url)))
         self.page.on("dialog", lambda dialog: (self.dialogs.append(dialog.message), dialog.dismiss()))
+        self.page.route("**/api/copilot/desktop", lambda route: route.fulfill(
+            status=200, content_type="application/json", body=json.dumps({
+                "status": "ok", "desktop": {"supported": True, "installed": True,
+                                            "state": "stopped", "code": "DESKTOP_STOPPED"}})))
         self.page.route("**/api/backup/*", lambda route: route.fulfill(
             status=200, content_type="application/json", body=json.dumps({
                 "status": "ok", "backup": {"state": "idle", "snapshot_count": 0}, "snapshots": []})))
@@ -278,6 +282,94 @@ class DashboardBrowserTests(unittest.TestCase):
         self.assertLessEqual(widths["document"], widths["viewport"], widths)
         self.search_names("青禾", 3)
         self.expect(self.page.locator("#catalog-body .open-bundle").first).to_be_visible()
+
+    def test_copilot_navigation_shows_local_process_status_without_launching(self):
+        self.expect(self.page.locator('#copilot-nav')).to_have_attribute('href', '/copilot/index.html')
+        self.expect(self.page.locator('#copilot-nav')).to_have_attribute('target', '_blank')
+        self.expect(self.page.locator('#copilot-desktop-status')).to_have_text('可启动')
+        self.page.route('**/api/copilot/desktop', lambda route: route.fulfill(
+            status=200, content_type='application/json', body=json.dumps({
+                'status': 'ok', 'desktop': {'supported': True, 'installed': True,
+                                           'state': 'running', 'code': 'DESKTOP_RUNNING'}})))
+        self.page.evaluate('refreshCopilotStatus()')
+        self.expect(self.page.locator('#copilot-desktop-status')).to_have_text('运行中')
+        self.page.evaluate("ArchiveShell.setModules([{id: 'copilot', enabled: false}])")
+        self.expect(self.page.locator('#copilot-nav')).to_be_hidden()
+        self.assertFalse(any(method == 'POST' and '/api/copilot/' in url for method, url in self.requests))
+
+    def test_new_sync_notice_waits_for_explicit_refresh_and_preserves_selection(self):
+        self.search_names('青禾', 3)
+        self.page.locator('#sort-select').select_option('messages_desc')
+        self.page.locator('#catalog-body .open-bundle').first.click()
+        self.expect(self.page.locator('#case-title')).to_have_text('青禾·百条')
+        state_requests = sum(url.endswith('/api/state') for _, url in self.requests)
+        self.page.evaluate('''() => renderSync({...state.syncStatus, state: 'completed',
+          last_run_at: '2026-09-05T11:00:00+00:00', imported_messages: 3, imported_conversations: 1})''')
+        self.expect(self.page.locator('#catalog-sync-update')).to_be_visible()
+        self.expect(self.page.locator('#catalog-sync-update')).to_contain_text('新增 3 条消息')
+        self.assertEqual(sum(url.endswith('/api/state') for _, url in self.requests), state_requests)
+        self.expect(self.page.locator('#case-title')).to_have_text('青禾·百条')
+        snapshot = self.page.evaluate('({bundles: state.bundles, sync: state.syncStatus})')
+        snapshot.update(status='ok', exporter={'ready': True})
+        self.page.route('**/api/state', lambda route: route.fulfill(
+            status=200, content_type='application/json', body=json.dumps(snapshot, ensure_ascii=False)))
+        self.page.locator('#catalog-sync-refresh').click()
+        self.expect(self.page.locator('#catalog-sync-update')).to_be_hidden()
+        self.expect(self.page.locator('#search-input')).to_have_value('青禾')
+        self.expect(self.page.locator('#sort-select')).to_have_value('messages_desc')
+        self.expect(self.page.locator('#case-title')).to_have_text('青禾·百条')
+        self.assertFalse(any(method == 'POST' and '/api/ai/' in url for method, url in self.requests))
+
+    def test_unchanged_sync_does_not_raise_new_archive_notice(self):
+        self.page.evaluate('''() => renderSync({...state.syncStatus, state: 'completed',
+          last_run_at: '2026-09-05T11:00:00+00:00', imported_messages: 0, imported_conversations: 0})''')
+        self.expect(self.page.locator('#catalog-sync-update')).to_be_hidden()
+
+    def test_archive_partial_errors_and_per_run_transcript_backfill_are_explicit(self):
+        self.page.evaluate('''() => renderArchive({media: {state: 'partial', archived_files: 7,
+          total_files: 9, failed_files: 2}, voice_transcription: {state: 'complete',
+          transcribed_audio: 4274, attached_messages: 0}})''')
+        self.page.locator('[data-view="maintenance"]').click()
+        self.expect(self.page.locator('#archive-summary')).to_contain_text('文件归档部分完成')
+        self.expect(self.page.locator('#archive-summary')).to_contain_text('失败 2')
+        self.expect(self.page.locator('#voice-archive-counts')).to_contain_text('本轮新增回填')
+        self.expect(self.page.locator('#voice-archive-counts')).to_contain_text('4,274 个音频')
+        self.page.evaluate("renderArchive({media: {state: 'error'}})")
+        self.expect(self.page.locator('#archive-summary')).to_contain_text('文件归档需检查')
+
+    def test_updated_messages_are_visible_and_raise_new_archive_notice(self):
+        self.page.evaluate('''() => renderSync({...state.syncStatus, state: 'completed',
+          last_run_at: '2026-09-05T11:00:00+00:00', imported_messages: 0,
+          imported_conversations: 0, updated_messages: 13, conflicted_messages: 0})''')
+        self.expect(self.page.locator('#catalog-sync-update')).to_be_visible()
+        self.expect(self.page.locator('#catalog-sync-update')).to_contain_text('更新 13 条')
+        self.page.locator('[data-view="maintenance"]').click()
+        self.expect(self.page.locator('#sync-details')).to_contain_text('13 更新')
+        self.expect(self.page.locator('#incremental-status')).to_contain_text('更新 13 条')
+
+    def test_message_conflicts_show_preservation_and_safe_next_step(self):
+        self.page.evaluate('''() => renderSync({...state.syncStatus, state: 'error',
+          error_code: 'message_conflicts', attention: true, updated_messages: 13,
+          conflicted_messages: 2, imported_messages: 4, failed_conversations: 1})''')
+        self.page.locator('[data-view="maintenance"]').click()
+        self.expect(self.page.locator('#sync-details')).to_contain_text('2 冲突待核对')
+        self.expect(self.page.locator('#sync-badge.is-ready')).to_have_count(0)
+        self.expect(self.page.locator('#sync-attention')).to_contain_text('已保留原记录，冲突版本未写入')
+        self.expect(self.page.locator('#sync-attention')).to_contain_text('请先备份并核对本机导出')
+        self.assertFalse(any(method == 'POST' and '/api/ai/' in url for method, url in self.requests))
+
+    def test_media_account_errors_are_actionable_without_revealing_identity_or_path(self):
+        self.page.locator('[data-view="maintenance"]').click()
+        for code, expected in [('media_account_binding_required', '请先完成目标账号的本机同步'),
+                               ('needs_account_selection', '请先在本机确认目标账号')]:
+            self.page.evaluate('''code => renderArchive({media: {state: 'error', error_code: code,
+              account: 'synthetic-private-account', path: 'Z:/synthetic-private-media'}})''', code)
+            self.expect(self.page.locator('#archive-summary')).to_contain_text(expected)
+            text = self.page.locator('#archive-summary').inner_text()
+            self.assertNotIn('synthetic-private', text)
+            self.assertNotIn('Z:/', text)
+        self.page.evaluate("renderArchive({media: {state: 'error', error_code: 'synthetic-private-account'}})")
+        self.assertNotIn('synthetic-private-account', self.page.locator('#archive-summary').inner_text())
 
 
 @unittest.skipUnless(UI_ENABLED, 'Opt-in synthetic browser tests')

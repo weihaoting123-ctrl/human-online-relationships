@@ -22,7 +22,11 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
-from message_normalizer import normalize_payload
+from message_normalizer import (
+    LOCAL_ID_UNVERIFIED as _LOCAL_ID_UNVERIFIED,
+    LOCAL_ID_VERIFIED as _LOCAL_ID_VERIFIED,
+    normalize_payload,
+)
 
 
 if sys.platform == "win32":
@@ -48,6 +52,14 @@ STABLE_ID_FIELDS = (
 )
 
 _IDENTITY_FIELDS = frozenset(name for name, _kind in STABLE_ID_FIELDS)
+_SOURCE_PROOF_FIELDS = _IDENTITY_FIELDS | {
+    "local_id", "content", "sender", "timestamp", "type", "local_type",
+    "source_message_id_kind", "source_message_namespace", "source_namespace",
+    "source_partition", "sourcePartition",
+    _LOCAL_ID_UNVERIFIED,
+    _LOCAL_ID_VERIFIED,
+}
+_BUNDLE_IDENTITY_FIELDS = frozenset({"own_wxid", "contact_username"})
 _FINGERPRINT_IGNORED_FIELDS = _IDENTITY_FIELDS | {
     "local_id",
     "source_message_id_kind",
@@ -57,6 +69,8 @@ _FINGERPRINT_IGNORED_FIELDS = _IDENTITY_FIELDS | {
     "source_partition",
     "dedupe",
     "merge",
+    _LOCAL_ID_UNVERIFIED,
+    _LOCAL_ID_VERIFIED,
 }
 _EMPTY_ID_VALUES = (None, "", 0, "0")
 _SERVER_STABLE_ID_KINDS = frozenset({"server_id", "msg_svr_id", "message_id"})
@@ -205,6 +219,55 @@ def _message_content_digest(message: dict[str, Any]) -> str:
     return hashlib.sha256(_canonical_json(durable).encode("utf-8")).hexdigest()
 
 
+def _source_content_conflict(left: dict[str, Any], right: dict[str, Any]) -> bool:
+    """Separate source disagreement from harmless transcript/metadata enrichment."""
+    return left.get("content") != right.get("content") or any(
+        _present(left.get(key)) and _present(right.get(key)) and left[key] != right[key]
+        for key in ("sender", "timestamp", "type", "local_type"))
+
+
+def _incoming_source_signature(message, payload_partition):
+    """Strict equality for candidate copies; unknown/missing is not agreement."""
+    return (tuple(message.get(key) for key in
+                  ("content", "sender", "timestamp", "type", "local_type", "local_id")),
+            _source_partition(message, payload_partition),
+            message.get(_LOCAL_ID_VERIFIED) is True,
+            message.get(_LOCAL_ID_UNVERIFIED) is True)
+
+
+def _verified_local_text_source(existing, incoming, prior, message, partitions, blocked):
+    """Match a fresh, explicitly proven row to the retained source identity."""
+    identity = stable_message_identity(message, incoming.get("source"))
+    partition = _source_partition(message)
+    return bool(
+        partitions and identity and identity not in blocked
+        and identity[1] in _SERVER_STABLE_ID_KINDS
+        and identity[0] == "weflow-cli"
+        and partition in partitions and _source_partition(prior) == partition
+        and prior.get(_LOCAL_ID_UNVERIFIED) is not True
+        and message.get(_LOCAL_ID_UNVERIFIED) is not True
+        and message.get(_LOCAL_ID_VERIFIED) is True
+        and all(_known_identity(existing.get(key)) is not None
+                and _known_identity(existing.get(key)) == _known_identity(incoming.get(key))
+                for key in ("own_wxid", "contact_username"))
+        and prior.get("type") == message.get("type") == "text"
+        and all(prior.get(key) == message.get(key)
+                for key in ("sender", "timestamp", "local_type", "local_id"))
+    )
+
+
+def _authoritative_text_update(existing, incoming, prior, message, partitions, blocked):
+    """Allow corrections only when BOTH rows have positive local-row proof.
+
+    A legacy normalized local_id can be a synthesized array index. Conflicting
+    text never backfills that proof, even after multiple attempted merges.
+    """
+    return bool(prior.get(_LOCAL_ID_VERIFIED) is True
+                and isinstance(message.get("content"), str) and message["content"]
+                and _verified_local_text_source(existing, incoming, prior, message,
+                                                partitions, blocked))
+
+
 def _add_source_context(
     message: dict[str, Any], payload_source: Any, payload_partition: Any = None
 ) -> dict[str, Any]:
@@ -221,9 +284,15 @@ def _add_source_context(
 
 
 def _enrich_without_overwrite(target: dict[str, Any], incoming: dict[str, Any]) -> bool:
+    """Enrich derived fields, never manufacture missing proof from a duplicate.
+
+    A stable server ID can occur in multiple shards. Missing provenance stays
+    missing even for equal/blank content; otherwise a rejected first merge could
+    grant authority to replace historical text during the next merge.
+    """
     changed = False
     for key, value in incoming.items():
-        if key in {"merge", "dedupe"} or not _present(value):
+        if key in _SOURCE_PROOF_FIELDS or key in {"merge", "dedupe"} or not _present(value):
             continue
         if not _present(target.get(key)):
             target[key] = copy.deepcopy(value)
@@ -263,6 +332,10 @@ def _merged_top_level(
 ) -> dict[str, Any]:
     result = copy.deepcopy(existing or incoming)
     for key, value in incoming.items():
+        # A populated legacy bundle with unknown identity cannot establish its
+        # historical owner/contact merely by accepting metadata from this batch.
+        if existing and existing["messages"] and key in _BUNDLE_IDENTITY_FIELDS:
+            continue
         if key in {
             "messages", "total", "normalization", "merge", "sources",
             "sourcePartition", "source_partition", "source_partitions",
@@ -314,6 +387,7 @@ def _merged_top_level(
 def merge_payloads(
     existing_payload: dict[str, Any] | None,
     incoming_payload: dict[str, Any],
+    *, authoritative_source_partitions=(),
 ) -> tuple[dict[str, Any], dict[str, int]]:
     """Merge normalized payloads and return the result plus body-free counts."""
 
@@ -336,6 +410,8 @@ def merge_payloads(
         "stable_id_duplicates": 0,
         "fingerprint_duplicates": 0,
         "stable_id_conflicts": 0,
+        "source_content_conflicts": 0,
+        "updated": 0,
         "enriched": 0,
         "existing_stable_duplicates_removed": 0,
         "total_after": 0,
@@ -349,6 +425,20 @@ def merge_payloads(
         existing.get("source_partition", existing.get("sourcePartition"))
         if existing else None
     )
+    authoritative_partitions = frozenset(authoritative_source_partitions)
+    if any(not isinstance(value, str) or not _OPAQUE_PARTITION_PATTERN.fullmatch(value)
+           for value in authoritative_partitions):
+        raise ValueError("authoritative_source_partition_invalid")
+    blocked_updates = set()
+    incoming_source = incoming.get("source")
+    incoming_partition = incoming.get("source_partition", incoming.get("sourcePartition"))
+    incoming_source_signatures = {}
+    for message in incoming_messages:
+        identity = stable_message_identity(message, incoming_source, incoming_partition)
+        if identity:
+            signature = _incoming_source_signature(message, incoming_partition)
+            if incoming_source_signatures.setdefault(identity, signature) != signature:
+                blocked_updates.add(identity)
 
     # Preserve all existing fallback records.  Without an upstream identity we
     # cannot prove that two same-looking historical messages are duplicates.
@@ -370,15 +460,14 @@ def merge_payloads(
         prior = output[prior_index]
         if _message_content_digest(prior) != _message_content_digest(message):
             counts["stable_id_conflicts"] += 1
+        if _source_content_conflict(prior, message):
+            counts["source_content_conflicts"] += 1
+            blocked_updates.add(stable_id)
         if _enrich_without_overwrite(prior, message):
             counts["enriched"] += 1
         counts["existing_stable_duplicates_removed"] += 1
 
     incoming_fallback_occurrences: Counter[str] = Counter()
-    incoming_source = incoming.get("source")
-    incoming_partition = incoming.get(
-        "source_partition", incoming.get("sourcePartition")
-    )
     for raw_message in incoming_messages:
         message = _add_source_context(raw_message, incoming_source, incoming_partition)
         stable_id = stable_message_identity(message, incoming_source, incoming_partition)
@@ -386,9 +475,31 @@ def merge_payloads(
             prior_index = stable_index.get(stable_id)
             if prior_index is not None:
                 prior = output[prior_index]
+                source_conflict = _source_content_conflict(prior, message)
+                proof_enriched = False
                 if _message_content_digest(prior) != _message_content_digest(message):
                     counts["stable_id_conflicts"] += 1
-                if _enrich_without_overwrite(prior, message):
+                if source_conflict:
+                    if _authoritative_text_update(existing or {}, incoming, prior, message,
+                                                  authoritative_partitions, blocked_updates):
+                        prior["content"] = message["content"]
+                        counts["updated"] += 1
+                        # Keep transcription and enrich only derived fields;
+                        # existing source proof remains immutable.
+                        if _enrich_without_overwrite(prior, message):
+                            counts["enriched"] += 1
+                        continue
+                    counts["source_content_conflicts"] += 1
+                elif (prior.get(_LOCAL_ID_VERIFIED) is not True
+                      and message.get("content")
+                      and _verified_local_text_source(existing or {}, incoming, prior, message,
+                                                      authoritative_partitions, blocked_updates)):
+                    # Exact nonempty fresh text plus all bound source fields
+                    # may certify an unmarked legacy row. Missing/negative
+                    # partition, account or local-row evidence cannot upgrade.
+                    prior[_LOCAL_ID_VERIFIED] = True
+                    proof_enriched = True
+                if _enrich_without_overwrite(prior, message) or proof_enriched:
                     counts["enriched"] += 1
                 counts["duplicates"] += 1
                 counts["stable_id_duplicates"] += 1
@@ -596,6 +707,7 @@ def merge_into_bundle(
     raw_export_path: os.PathLike[str] | str | None = None,
     raw_archive_dir: os.PathLike[str] | str | None = None,
     history_dir: os.PathLike[str] | str | None = None,
+    authoritative_source_partitions=(),
 ) -> dict[str, Any]:
     """Archive the raw input and atomically update one derived message bundle."""
 
@@ -613,7 +725,8 @@ def merge_into_bundle(
             if existing_bytes is not None
             else None
         )
-        merged, counts = merge_payloads(existing_payload, incoming_payload)
+        merged, counts = merge_payloads(existing_payload, incoming_payload,
+                                       authoritative_source_partitions=authoritative_source_partitions)
 
         # Validate and merge first.  A contact/account mismatch must not create
         # a misleading archive association with this bundle.

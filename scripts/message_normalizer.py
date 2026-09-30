@@ -6,6 +6,15 @@ from datetime import datetime, timezone
 
 MIN_TIMESTAMP = datetime(2000, 1, 1, tzinfo=timezone.utc).timestamp()
 MAX_TIMESTAMP = datetime(2100, 1, 1, tzinfo=timezone.utc).timestamp()
+LOCAL_ID_UNVERIFIED = "source_local_id_unverified"
+LOCAL_ID_VERIFIED = "source_local_id_verified"
+
+
+def valid_local_row_id(value):
+    """Whether a raw field can prove an explicit exporter-local row identity."""
+    if isinstance(value, bool) or not isinstance(value, (int, str)):
+        return False
+    return str(value).strip() not in ("", "0", "unknown")
 
 
 def normalize_timestamp(value):
@@ -108,6 +117,17 @@ def normalize_message(raw, index):
                 break
 
     message = dict(raw)
+    if not valid_local_row_id(raw.get("local_id", raw.get("localId"))):
+        # Persist negative proof BEFORE synthesizing an array ID, including
+        # when normalization happens in an adapter before bundle merging.
+        message[LOCAL_ID_UNVERIFIED] = True
+    if message.get(LOCAL_ID_UNVERIFIED) is True:
+        message.pop(LOCAL_ID_VERIFIED, None)
+    elif valid_local_row_id(raw.get("localId")) and raw.get(
+            "local_id", raw.get("localId")) == raw["localId"]:
+        # A legacy normalized local_id alone may have been an array index.
+        # Only a raw exporter field or an already persisted proof certifies it.
+        message[LOCAL_ID_VERIFIED] = True
     message["local_id"] = raw.get("local_id", raw.get("localId", index))
     message["sender"] = sender
     message["timestamp"] = normalize_timestamp(timestamp_value)

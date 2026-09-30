@@ -39,6 +39,13 @@ V2_MAGIC = b'\x07\x08V2\x08\x07'
 V1_MAGIC = b'\x07\x08V1\x08\x07'
 
 
+class ArchiveIdentityError(ValueError):
+    """A fixed, public-safe reason to stop before adopting another source."""
+    def __init__(self, code):
+        super().__init__(code)
+        self.code = code
+
+
 def atomic_json(path, value):
     path.parent.mkdir(parents=True, exist_ok=True)
     temp = path.with_name(path.name + '.' + uuid.uuid4().hex + '.tmp')
@@ -56,7 +63,7 @@ def account_root():
     import sync_all_wechat as sync
     account, base = sync.discover_unique_account()
     root = base if base.name == account else base / account
-    if root.is_symlink() or not root.is_dir() or root.name != account:
+    if is_link(root) or not root.is_dir() or root.name != account:
         raise ValueError('account_root_invalid')
     if not any((root / name).is_dir() for name in BUCKETS):
         raise ValueError('account_layout_missing')
@@ -322,6 +329,69 @@ def open_catalog(private):
     return db
 
 
+def bind_source(db, root, private, account_hash=None, files=None):
+    """Bind a catalog once; migrate old catalogs only with filesystem proof.
+
+    The CLI supplies an account hash only after discovering one unique account.
+    Root-only callers (including offline/synthetic use) remain bound to their
+    exact root. Legacy catalogs have no owner to adopt safely from a name alone:
+    every surviving mapping must retain its nonzero source file identity, and
+    at least one unchanged mapping must match both the source and archived hash.
+    Rotated, copied, linked, or signature-less legacy sources require explicit
+    migration outside this automatic archive path. No existing row is deleted.
+    """
+    root = Path(root).resolve()
+    root_hash = hashlib.sha256(os.path.normcase(str(root)).encode('utf-8')).hexdigest()
+    if account_hash is not None and (not isinstance(account_hash, str)
+                                    or not re.fullmatch('[a-f0-9]{64}', account_hash)):
+        raise ArchiveIdentityError('media_account_binding_required')
+    metadata = dict(db.execute("SELECT key,value FROM metadata WHERE key IN ('source_root_hash_v1','account_hash')"))
+    bound_root, bound_account = metadata.get('source_root_hash_v1'), metadata.get('account_hash')
+    if any(value is not None and (not isinstance(value, str) or not re.fullmatch('[a-f0-9]{64}', value))
+           for value in (bound_root, bound_account)):
+        raise ArchiveIdentityError('media_account_binding_required')
+    if bound_account:
+        if not account_hash or account_hash != bound_account:
+            raise ArchiveIdentityError('needs_account_selection')
+    elif bound_root and bound_root != root_hash:
+        raise ArchiveIdentityError('media_account_binding_required')
+    if not bound_root and not bound_account and db.execute('SELECT COUNT(*) FROM files').fetchone()[0]:
+        current = {source.relative_to(root).as_posix(): source for source, _, _ in
+                   (files if files is not None else inventory(root)[0])}
+        proved = False
+        for relative, sha, encoded in db.execute('SELECT path,sha,source_signature FROM files ORDER BY size ASC,path ASC'):
+            source = current.get(relative)
+            if source is None:
+                continue
+            try:
+                prior = json.loads(encoded)
+                before = fingerprint(source)
+                info = source.stat()
+                if (not isinstance(prior, list) or len(prior) != 5
+                        or not all(type(value) is int for value in prior)
+                        or not prior[4] or not before[4] or tuple(prior[3:]) != before[3:]
+                        or info.st_nlink != 1 or is_link(source)):
+                    raise ValueError('unproved_source_identity')
+                # Hash just one intact provenance anchor, not the entire
+                # media archive. Changed files with the same identity are
+                # processed by the normal incremental path after migration.
+                if not proved and before[0] > 0 and tuple(prior) == before:
+                    blob = private / 'blobs' / sha[:2] / sha
+                    if (not re.fullmatch('[a-f0-9]{64}', sha) or is_link(blob)
+                            or digest_file(source) != sha or digest_file(blob) != sha
+                            or fingerprint(source) != before):
+                        raise ValueError('unproved_source_content')
+                    proved = True
+            except (OSError, ValueError, TypeError):
+                raise ArchiveIdentityError('media_account_binding_required') from None
+        if not proved:
+            raise ArchiveIdentityError('media_account_binding_required')
+    db.execute('INSERT OR REPLACE INTO metadata VALUES(?,?)', ('source_root_hash_v1', root_hash))
+    if account_hash:
+        db.execute('INSERT OR IGNORE INTO metadata VALUES(?,?)', ('account_hash', account_hash))
+    db.commit()
+
+
 def existing_record(db, relative):
     columns = ('sha', 'size', 'mtime', 'bucket', 'kind', 'month', 'variant',
                'export_rel', 'source_signature')
@@ -402,7 +472,10 @@ def write_report(db, status, export):
 
 
 def archive(root, private=PRIVATE, export=EXPORT, status_path=STATUS, image_secrets=None,
-            verify_existing=False):
+            verify_existing=False, account_hash=None):
+    if is_link(Path(root)):
+        raise ArchiveIdentityError('media_account_binding_required')
+    root = Path(root).resolve()
     files, skipped = inventory(root)
     run = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ') + '-' + uuid.uuid4().hex[:8]
     status = dict(state='running', total_files=len(files), total_bytes=sum(r[1] for r in files), archived_files=0, archived_bytes=0, duplicate_payloads=0, viewable_images=0, encrypted_images=0, failed_files=0, skipped_links_or_unreadable=skipped, source_untouched=True, updated_at='', categories={})
@@ -413,6 +486,7 @@ def archive(root, private=PRIVATE, export=EXPORT, status_path=STATUS, image_secr
     with archive_lock(private):
         db = open_catalog(private)
         try:
+            bind_source(db, root, private, account_hash, files)
             # Preserve cumulative counts while a new run is in progress, so
             # the dashboard never implies previously archived data vanished.
             catalog_totals(db, status)
@@ -479,20 +553,28 @@ def archive(root, private=PRIVATE, export=EXPORT, status_path=STATUS, image_secr
                 write_report(db,status,export)
                 status['report_rebuilt'] = True
             atomic_json(status_path,status)
+        except ArchiveIdentityError as exc:
+            # Persist only while holding the catalog's operation lock; a
+            # contending process must never overwrite an active owner's state.
+            atomic_json(status_path, {'state':'error', 'error_code':exc.code, 'source_untouched':True})
+            raise
         finally:
             db.close()
     return status
 
 
-def refresh_images(image_secrets, private=PRIVATE, export=EXPORT, status_path=STATUS):
+def refresh_images(image_secrets, private=PRIVATE, export=EXPORT, status_path=STATUS,
+                   source_root=None, account_hash=None):
     """Decode previously archived media without reading/copying source files."""
     with archive_lock(private):
         db=open_catalog(private)
-        status=json.loads(status_path.read_text(encoding='utf-8'))
-        status['media_refresh_state']='running'
-        status['media_refresh_processed']=0
-        status['media_refresh_recovered']=0
         try:
+            if source_root is not None:
+                bind_source(db, source_root, private, account_hash)
+            status=json.loads(status_path.read_text(encoding='utf-8'))
+            status['media_refresh_state']='running'
+            status['media_refresh_processed']=0
+            status['media_refresh_recovered']=0
             rows=list(db.execute("SELECT DISTINCT sha FROM files WHERE kind IN ('encrypted_image','unrecognized_image')"))
             def decode_one(sha):
                 try:
@@ -536,6 +618,9 @@ def refresh_images(image_secrets, private=PRIVATE, export=EXPORT, status_path=ST
             status['updated_at']=datetime.now(timezone.utc).isoformat()
             atomic_json(status_path,status)
             write_report(db,status,export)
+        except ArchiveIdentityError as exc:
+            atomic_json(status_path, {'state':'error', 'error_code':exc.code, 'source_untouched':True})
+            raise
         finally:
             db.close()
     return status
@@ -568,7 +653,11 @@ def main(argv=None):
                     if saved.get('account_hash') == sync._account_hash(root.name):
                         unpacked = json.loads(sync._unprotect_secret(saved['protected']))
                         secrets = (int(unpacked['cfg_u32']),str(unpacked['wxid']))
-                result = refresh_images(secrets) if args.refresh_images else archive(root,image_secrets=secrets,verify_existing=args.verify_existing)
+                import sync_all_wechat as sync
+                identity = sync._account_hash(root.name)
+                result = (refresh_images(secrets, source_root=root, account_hash=identity) if args.refresh_images
+                          else archive(root, image_secrets=secrets, verify_existing=args.verify_existing,
+                                       account_hash=identity))
             else:
                 files, skipped = inventory(root)
                 result = dict(state='inspected',total_files=len(files),total_bytes=sum(r[1] for r in files),skipped_links_or_unreadable=skipped,buckets=dict(Counter(r[2] for r in files)),source_untouched=True)
@@ -576,8 +665,10 @@ def main(argv=None):
         return 0 if result.get('state') in {'completed','inspected','running'} else 1
     except Exception as exc:
         import sync_all_wechat as sync
-        code = exc.code if isinstance(exc,sync.SyncFailure) and exc.code == 'needs_account_selection' else 'local_archive_failed'
-        print(json.dumps({'state':'error','error_code':code,'source_untouched':True}))
+        allowed = {'needs_account_selection', 'media_account_binding_required'}
+        code = exc.code if isinstance(exc,(sync.SyncFailure, ArchiveIdentityError)) and exc.code in allowed else 'local_archive_failed'
+        result = {'state':'error','error_code':code,'source_untouched':True}
+        print(json.dumps(result))
         return 1
 
 

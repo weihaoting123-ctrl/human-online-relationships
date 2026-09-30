@@ -68,6 +68,10 @@
 .ai-segment-heading strong { font-size: 11px; font-weight: 500; overflow-wrap: anywhere; }
 .ai-segment-summary { font-size: 12px; line-height: 1.9; color: var(--ink-soft); overflow-wrap: anywhere; white-space: pre-wrap; margin: 9px 0 0; }
 .history-item .ai-history-partial { color: var(--ochre); }
+.ai-history-search { display: grid; gap: 8px; max-width: 420px; margin: 20px 0; color: var(--ink-soft); font-size: 12px; }
+.ai-history-pagination { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin: 16px 0 28px; font-size: 12px; color: var(--ink-soft); }
+.ai-task-detail { display: block; margin-top: 6px; color: var(--ink-soft); white-space: normal; overflow-wrap: anywhere; }
+.ai-task-state { color: var(--ochre); }
 @media (max-width: 850px) { .ai-chart-grid { gap: 12px; }.ai-metrics { padding: 20px; }.ai-chart-panel { padding: 16px; } }
 @media (max-width: 600px) {
  .ai-metrics { padding: 18px; }.ai-chart-grid { grid-template-columns: minmax(0, 1fr); }.ai-chart-wide { grid-column: auto; }

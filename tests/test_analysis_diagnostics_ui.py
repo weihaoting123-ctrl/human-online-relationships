@@ -110,6 +110,141 @@ class AnalysisDiagnosticsBrowserTests(unittest.TestCase):
         self.expect(self.page.locator('#ai-history-list')).to_contain_text('尚无分析记录')
         self.assertEqual(len(self.run_calls()), 1)
 
+    def test_reloaded_zero_segment_failure_remains_visible_without_resubmitting(self):
+        self.no_report = True
+        self.recovery_job = True
+        self.job_state = 'error'
+        self.progress_overrides = {'attempted_calls': 1, 'completed_calls': 0,
+                                   'completed_segments': 0, 'stage': 'segments'}
+        self.job_overrides = {'report_id': None, 'error': '合成首段失败；本次不会自动重试'}
+        self.open_ai()
+        self.expect(self.page.locator('#ai-job-history-list')).to_contain_text('合成首段失败')
+        self.expect(self.page.locator('#ai-job-history-list')).to_contain_text('新调用尝试 1 次')
+        self.page.reload(wait_until='networkidle')
+        self.open_ai()
+        self.expect(self.page.locator('#ai-job-history-list')).to_contain_text('合成首段失败')
+        self.page.locator('#ai-job-history-list .ai-task-item').click()
+        self.expect(self.page.locator('#ai-job-progress')).to_be_visible()
+        self.expect(self.page.locator('#ai-feedback')).to_contain_text('合成首段失败')
+        self.expect(self.page.locator('#ai-cancel-job')).to_be_disabled()
+        self.assert_consent_cleared()
+        self.assertEqual(self.run_calls(), [])
+
+    def test_report_pages_reach_oldest_and_filter_without_cloud_calls(self):
+        from urllib.parse import parse_qs
+        records = [{**self.report(), 'id': f'{index:048x}', 'model': f'synthetic-page-{index}'}
+                   for index in range(107)]
+        def paged_reports(route):
+            import json
+            parsed = urlparse(route.request.url)
+            params = parse_qs(parsed.query)
+            offset = int(params.get('offset', ['0'])[0])
+            limit = int(params.get('limit', ['20'])[0])
+            query = params.get('q', [''])[0]
+            matches = [item for item in records if query in item['model']]
+            route.fulfill(status=200, content_type='application/json', body=json.dumps({
+                'status': 'ok', 'reports': matches[offset:offset + limit],
+                'total': len(matches), 'offset': offset, 'limit': limit,
+                'next_offset': offset + limit if offset + limit < len(matches) else None,
+            }))
+        self.page.route('**/api/ai/history?*', paged_reports)
+        self.open_ai()
+        self.expect(self.page.locator('#ai-history-list .history-item')).to_have_count(20)
+        for expected in (21, 41, 61, 81, 101):
+            self.page.locator('#ai-reports-next').click()
+            self.expect(self.page.locator('#ai-reports-page')).to_contain_text(str(expected) + '—')
+        self.expect(self.page.locator('#ai-history-list')).to_contain_text('synthetic-page-106')
+        self.expect(self.page.locator('#ai-reports-next')).to_be_disabled()
+        self.page.locator('#ai-history-search').fill('synthetic-page-106')
+        self.expect(self.page.locator('#ai-history-list .history-item')).to_have_count(1)
+        self.expect(self.page.locator('#ai-reports-page')).to_have_text('1—1 / 1 条')
+        self.assertEqual(self.run_calls(), [])
+
+    def delayed_recovery(self):
+        self.current_scope = {'bundle_id': 'fixture_000', 'date_from': '2026-01-01',
+                              'date_to': '2026-09-01', 'focus': 'interaction_rhythm'}
+        self.recovery_job = True
+        self.job_state = 'error'
+        self.job_overrides = {'report_id': None, 'error': '合成旧任务状态未知'}
+        active = {**self.job(), 'job_id': 'e' * 48, 'state': 'running',
+                  'scope': {**self.current_scope, 'bundle_id': 'fixture_001'},
+                  'error': None, 'report_id': None}
+        import json
+        self.page.route('**/api/ai/jobs/' + active['job_id'], lambda route: route.fulfill(
+            status=200, content_type='application/json', body=json.dumps(active)))
+        fixtures.AnalysisBrowserTests.delay_get(self, '/api/ai/jobs', {'status': 'ok', 'jobs': [active]})
+        self.open_ai()
+        self.page.wait_for_function('window.__syntheticDelayedGets.length === 1')
+        self.expect(self.page.locator('#ai-job-history-list')).to_contain_text('合成旧任务状态未知')
+
+    def test_delayed_recovery_cannot_replace_user_selected_failed_task(self):
+        self.delayed_recovery()
+        self.page.locator('#ai-job-history-list .ai-task-item').click()
+        self.expect(self.page.locator('#ai-feedback')).to_contain_text('合成旧任务状态未知')
+        self.expect(self.page.locator('#ai-progress-scope')).to_contain_text('合成青禾')
+        fixtures.AnalysisBrowserTests.release_delayed_get(self)
+        self.expect(self.page.locator('#ai-feedback')).to_contain_text('合成旧任务状态未知')
+        self.expect(self.page.locator('#ai-progress-scope')).to_contain_text('合成青禾')
+        self.expect(self.page.locator('#ai-scope-fields')).not_to_be_disabled()
+        self.assertEqual(self.run_calls(), [])
+
+    def test_delayed_recovery_cannot_take_over_a_new_scope(self):
+        self.delayed_recovery()
+        self.select_scope()
+        self.preview()
+        fixtures.AnalysisBrowserTests.release_delayed_get(self)
+        self.expect(self.page.locator('#ai-preview')).to_be_visible()
+        self.expect(self.page.locator('#ai-scope-fields')).not_to_be_disabled()
+        self.assert_consent_cleared()
+        self.assertEqual(self.run_calls(), [])
+
+    def test_delayed_recovery_cannot_replace_a_selected_report(self):
+        self.has_report = True
+        self.delayed_recovery()
+        self.page.locator('#ai-history-list .history-item').click()
+        self.expect(self.page.locator('#ai-result')).to_be_visible()
+        self.expect(self.page.locator('#ai-result-title')).to_contain_text('合成青禾')
+        fixtures.AnalysisBrowserTests.release_delayed_get(self)
+        self.expect(self.page.locator('#ai-result')).to_be_visible()
+        self.expect(self.page.locator('#ai-scope-fields')).not_to_be_disabled()
+        self.assertEqual(self.run_calls(), [])
+
+    def test_newer_empty_recovery_supersedes_older_running_job_response(self):
+        self.delayed_recovery()
+        self.page.evaluate('''() => {
+          const fetchBefore = window.fetch;
+          window.__syntheticNewRecoveryReads = 0;
+          window.fetch = (url, options) => {
+            if (String(url) === '/api/ai/jobs' && (!options?.method || options.method === 'GET')) {
+              window.__syntheticNewRecoveryReads += 1;
+              return Promise.resolve(new Response(JSON.stringify({status: 'ok', jobs: []}),
+                {status: 200, headers: {'Content-Type': 'application/json'}}));
+            }
+            return fetchBefore(url, options);
+          };
+        }''')
+        self.page.locator('#ai-refresh-history').click()
+        self.page.wait_for_function('window.__syntheticNewRecoveryReads === 1')
+        fixtures.AnalysisBrowserTests.release_delayed_get(self)
+        self.expect(self.page.locator('#ai-job-progress')).not_to_be_visible()
+        self.expect(self.page.locator('#ai-scope-fields')).not_to_be_disabled()
+        self.assertEqual(self.run_calls(), [])
+
+    def test_delayed_recovery_cannot_take_over_after_a_new_run_stops(self):
+        self.delayed_recovery()
+        self.select_scope()
+        self.preview()
+        self.page.locator('#ai-consent').check()
+        self.page.locator('#ai-run-button').click()
+        self.expect(self.page.locator('#ai-feedback')).to_contain_text('合成旧任务状态未知')
+        self.expect(self.page.locator('#ai-cancel-job')).to_be_disabled()
+        fixtures.AnalysisBrowserTests.release_delayed_get(self)
+        self.expect(self.page.locator('#ai-progress-scope')).to_contain_text('合成青禾')
+        self.expect(self.page.locator('#ai-scope-fields')).not_to_be_disabled()
+        self.expect(self.page.locator('#ai-cancel-job')).to_be_disabled()
+        self.assert_consent_cleared()
+        self.assertEqual(len(self.run_calls()), 1)
+
     def test_partial_merge_history_preserves_specific_local_diagnostic_and_recheck_consent(self):
         self.current_scope = {'bundle_id': 'fixture_000', 'date_from': '2026-01-01',
                               'date_to': '2026-09-01', 'focus': 'communication',

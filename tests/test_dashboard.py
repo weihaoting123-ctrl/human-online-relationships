@@ -266,6 +266,30 @@ class DashboardServiceTests(unittest.TestCase):
         self.assertEqual(status["error_code"], "invalid_status")
         self.assertTrue(status["attention"])
 
+    def test_sync_corrections_and_conflicts_are_safe_aggregates(self):
+        self.sync_status.parent.mkdir(parents=True)
+        self.sync_status.write_text(json.dumps({
+            "state": "completed", "updated_messages": 3,
+            "conflicted_messages": 2, "error_code": "message_conflicts",
+            "conflict_content": "PRIVATE_SYNTHETIC_CONTENT",
+        }), encoding="utf-8")
+        status = app.sync_status()
+        self.assertEqual(status["updated_messages"], 3)
+        self.assertEqual(status["conflicted_messages"], 2)
+        self.assertEqual(status["error_code"], "message_conflicts")
+        self.assertTrue(status["attention"])
+        self.assertNotIn("PRIVATE_SYNTHETIC_CONTENT", json.dumps(status))
+
+    def test_media_account_binding_error_is_allowlisted_without_identity(self):
+        for code in ("media_account_binding_required", "needs_account_selection", "private-account"):
+            (self.root / "archive-status.json").write_text(json.dumps({
+                "state": "error", "error_code": code, "account": "PRIVATE_SYNTHETIC_ACCOUNT",
+            }), encoding="utf-8")
+            with mock.patch.object(app, "DATA_DIR", self.root):
+                status = app.archive_status()["media"]
+            self.assertEqual(status["error_code"], code if code != "private-account" else None)
+            self.assertNotIn("PRIVATE_SYNTHETIC_ACCOUNT", json.dumps(status))
+
 
 class DashboardHttpTests(unittest.TestCase):
     def setUp(self):

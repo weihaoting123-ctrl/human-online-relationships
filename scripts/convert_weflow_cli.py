@@ -12,6 +12,7 @@ from external_chat_import import (
     write_contact_bundle,
 )
 from message_merge import normalize_source_partition
+from message_normalizer import LOCAL_ID_UNVERIFIED, LOCAL_ID_VERIFIED, valid_local_row_id
 from import_store import ImportBusyError, import_error_payload, validate_import_path
 
 
@@ -68,6 +69,10 @@ def convert_payload(data, contact, contact_id=None, own_wxid=None):
             "local_type": raw.get("localType"),
             "content": content_or_placeholder(content, message_type),
         }
+        if not valid_local_row_id(raw.get("localId")):
+            record[LOCAL_ID_UNVERIFIED] = True
+        else:
+            record[LOCAL_ID_VERIFIED] = True
         source_identity = _source_message_identity(raw)
         if source_identity is not None:
             source_message_id, source_message_id_kind = source_identity

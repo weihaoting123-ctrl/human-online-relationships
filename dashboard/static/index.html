@@ -17,6 +17,7 @@
 <nav class="nav-list">
 <a class="nav-item is-active" href="#catalog" data-view="catalog" aria-current="page"><span><svg class="nav-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="4"/><path d="M8 3v18M12 8h5M12 12h5M12 16h3"/></svg>档案检索</span><span id="nav-count" class="nav-count">—</span></a>
 <a class="nav-item" href="#analysis-workspace" data-view="analysis-workspace" data-module-entry="analysis"><span><svg class="nav-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17V7a3 3 0 0 1 3-3h12a3 3 0 0 1 3 3v8a3 3 0 0 1-3 3H9l-6 3v-4Z"/><path d="M7 13v-2M12 13V8M17 13v-4"/></svg>AI 分析</span><span class="nav-hint">按需</span></a>
+<a id="copilot-nav" class="nav-item" href="/copilot/index.html" target="_blank" rel="noopener" data-module-entry="copilot" aria-label="打开回复助手，新标签页"><span><svg class="nav-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 16V7a3 3 0 0 1 3-3h10a3 3 0 0 1 3 3v7a3 3 0 0 1-3 3H9l-5 3v-4Z"/><path d="m8 10 2 2 5-5"/></svg>回复助手 ↗</span><span id="copilot-desktop-status" class="nav-hint" aria-live="polite">检查中</span></a>
 <a class="nav-item" href="/exports/wechat-media/index.html" target="_blank" rel="noopener" data-module-entry="media"><span><svg class="nav-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="4"/><circle cx="8" cy="8" r="1.5"/><path d="m3 17 5-5 4 4 4-6 5 7"/></svg>图片相册</span><span aria-hidden="true">↗</span></a>
 <a class="nav-item" href="#maintenance" data-view="maintenance"><span><svg class="nav-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20 10a8 8 0 0 0-14-4L3 9m0-5v5h5M4 14a8 8 0 0 0 14 4l3-3m0 5v-5h-5"/></svg>同步与管理</span><span class="nav-hint">按需</span></a>
 <a class="nav-item" href="#trash" data-view="trash"><span><svg class="nav-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M9 6V3h6v3M6 6l1 15h10l1-15M10 10v7M14 10v7"/></svg>回收站</span><span id="trash-count" class="nav-count">0</span></a>
@@ -30,6 +31,7 @@
 <section id="import-result" class="import-result" hidden aria-label="最近一次导入结果"><p id="import-result-message" role="status" aria-live="polite"></p><button id="import-result-open" class="quiet-button" type="button" hidden>查看已导入会话</button></section>
 <section id="catalog" class="catalog" aria-labelledby="catalog-title">
 <header class="page-heading"><div><p class="eyebrow">本机微信 / 会话索引</p><h1 id="catalog-title">会话档案</h1><p class="page-description">按名称、内容和时间查找；从会话清单进入统计详情。</p></div><button id="refresh-button" class="quiet-button" type="button">刷新档案</button></header>
+<p id="catalog-sync-update" class="search-status" role="status" hidden><span id="catalog-sync-update-text"></span> <button id="catalog-sync-refresh" class="text-button" type="button">刷新新归档</button></p>
 <div class="archive-ledger" aria-label="档案概览"><div><span>已归档会话</span><strong id="total-conversations">—</strong></div><div><span>已归档消息</span><strong id="total-messages">—</strong></div><div><span>可查看图片记录</span><strong id="total-images">—</strong></div><p>原话不在控制台显示<br><span>内容搜索仅返回匹配数量</span></p></div>
 <div class="catalog-card">
 <form id="catalog-search" class="search-form" role="search">
@@ -100,7 +102,12 @@
 </div></div>
 <section id="ai-relationship-timeline" class="relationship-timeline" hidden aria-label="所选样本关系时间线"></section>
 <section id="ai-metrics" class="ai-metrics" hidden aria-label="所选会话日期范围的本机统计"></section>
-<section class="analysis-history"><div class="section-heading"><div><p class="eyebrow">每次分析，独立留档</p><h2>本地分析历史</h2></div><button id="ai-refresh-history" class="quiet-button" type="button">刷新历史</button></div><div id="ai-history-list" class="history-list"><p class="field-note">尚无分析记录。</p></div></section>
+<section class="analysis-history"><div class="section-heading"><div><p class="eyebrow">每次分析，独立留档</p><h2>本地分析历史</h2></div><button id="ai-refresh-history" class="quiet-button" type="button">刷新历史</button></div>
+<label class="ai-history-search" for="ai-history-search">筛选日期或模型<input id="ai-history-search" type="search" maxlength="200" placeholder="例如 2026-09 或 deepseek" autocomplete="off"></label>
+<h3>分析任务</h3><p class="field-note">失败、停止和结果未知的任务也会保留。查看记录不会重新发送分析。</p><div id="ai-job-history-list" class="history-list"></div>
+<nav class="ai-history-pagination" aria-label="分析任务分页"><button id="ai-jobs-prev" class="quiet-button" type="button" disabled>上一页</button><span id="ai-jobs-page" aria-live="polite"></span><button id="ai-jobs-next" class="quiet-button" type="button" disabled>下一页</button></nav>
+<h3>已保存报告</h3><div id="ai-history-list" class="history-list"><p class="field-note">尚无分析记录。</p></div>
+<nav class="ai-history-pagination" aria-label="分析报告分页"><button id="ai-reports-prev" class="quiet-button" type="button" disabled>上一页</button><span id="ai-reports-page" aria-live="polite"></span><button id="ai-reports-next" class="quiet-button" type="button" disabled>下一页</button></nav></section>
 </section>
 <section id="maintenance" class="maintenance" hidden aria-labelledby="maintenance-title">
 <div class="section-heading"><div><p class="eyebrow">同步 / 增量更新 · 本机管理</p><h1 id="maintenance-title">同步与备份</h1><p class="page-description">按需检查新增与变更；定时任务需另行配置，归档与 AI 分析相互独立。</p></div><span id="sync-badge" class="status-badge" aria-live="polite">检查中</span></div>

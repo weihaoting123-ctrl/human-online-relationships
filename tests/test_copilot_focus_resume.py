@@ -69,7 +69,11 @@ class FocusResumeTests(CopilotLiveFixture):
         sent = str(self.cloud.call_args.args[2])
         self.assertIn('LIVE_SYNTHETIC_4', sent)
         self.assertNotIn('LIVE_SYNTHETIC_3', sent)
-        self.assertNotIn('LIVE_SYNTHETIC_2', sent)
+        # Text observed before focus loss was already granted context. Away
+        # text is excluded, while resuming does not itself launch a new call.
+        self.assertIn('LIVE_SYNTHETIC_2', sent)
+        self.assertNotIn('LIVE_SYNTHETIC_1', sent)
+        self.assertEqual(self.cloud.call_count, 2)
 
     def test_pending_text_is_never_replayed_after_pause(self):
         session = self.start_live()

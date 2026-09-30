@@ -6,6 +6,12 @@
 
 [项目解构](docs/project-decomposition.md) · [既有路线图](ROADMAP.md) · [GitHub 待办](https://github.com/weihaoting123-ctrl/human-online-relationships/issues)
 
+## STAB-01 · RC10 审查修复
+
+[主 Issue #54](https://github.com/weihaoting123-ctrl/human-online-relationships/issues/54) · [审查记录](docs/reviews/v1.0.0-rc.10-review.md)。状态：代码与合成验收；远端合并及发布以当前 PR / CI 为准。
+
+本轮覆盖会话弹窗竞态、助手滚动上下文与状态刷新、失败任务查询和历史分页、文字更正与冲突检查点、附件归属绑定、入口与同步状态。保留按次确认、时限次数、旧历史与微信原库；不把本轮当作 JOB-01 / ACCT-01 全部完成。无法证明归属的旧附件目录暂停，不提供猜选或自动恢复流程。真实微信兼容性、模型表达质量和正式 1.0 验收继续待办。
+
 ## 使用规则
 
 - 稳定 ID 不随标题或版本变化；一个需求只保留一个主 Issue，拆分任务引用父需求，不重复创建。

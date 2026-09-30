@@ -77,6 +77,8 @@ PUBLIC_STATUS_FIELDS = (
     "imported_conversations",
     "failed_conversations",
     "imported_messages",
+    "updated_messages",
+    "conflicted_messages",
     "deduplicated_messages",
     "unchanged_messages",
     "skipped_databases",
@@ -416,6 +418,8 @@ def _base_status(mode: str) -> dict[str, Any]:
         "imported_conversations": 0,
         "failed_conversations": 0,
         "imported_messages": 0,
+        "updated_messages": 0,
+        "conflicted_messages": 0,
         "deduplicated_messages": 0,
         "unchanged_messages": 0,
         "skipped_databases": 0,
@@ -2255,6 +2259,7 @@ def _sync_sessions(
                 del raw_payload
                 del raw_messages
                 normalized = normalize_payload(converted, drop_invalid=True)
+                normalization_failures = int(normalized["normalization"]["dropped_messages"])
                 del converted
                 bundle_dir = _existing_bundle_path(talker, display_name)
                 messages_path = bundle_dir / "messages.json"
@@ -2263,6 +2268,12 @@ def _sync_sessions(
                     messages_path,
                     raw_export_path=raw_path,
                     raw_archive_dir=RAW_ARCHIVE_ROOT,
+                    # Only this verified local snapshot may correct a text
+                    # row from the exact same shard. Decode failures never
+                    # become an authoritative replacement of existing text.
+                    # Nor may dropped invalid copies hide a conflicting row.
+                    authoritative_source_partitions=(source_partitions
+                        if not (content_decode_failures or normalization_failures) else ()),
                 )
                 del normalized
                 counts = merge_result["counts"]
@@ -2287,15 +2298,23 @@ def _sync_sessions(
 
                 status["imported_conversations"] += 1
                 status["imported_messages"] += int(counts.get("added", 0))
+                status["updated_messages"] += int(counts.get("updated", 0))
+                conflicts = int(counts.get("source_content_conflicts", 0))
+                status["conflicted_messages"] += conflicts
                 status["deduplicated_messages"] += int(counts.get("duplicates", 0))
                 if not counts.get("written"):
                     status["unchanged_messages"] += int(counts.get("incoming", 0))
-                if not stats_ok or content_decode_failures:
+                if not stats_ok or content_decode_failures or normalization_failures or conflicts:
                     status["failed_conversations"] += 1
+                if conflicts:
+                    row["content_conflicts"] = conflicts
+                    row["error_code"] = "message_conflicts"
                 if not stats_ok:
                     row["stats_state"] = "failed"
                 if content_decode_failures:
                     row["content_decode_failures"] = content_decode_failures
+                if normalization_failures:
+                    row["normalization_failures"] = normalization_failures
                 row.update({
                     "state": "imported",
                     "raw_path": str(raw_path.relative_to(run_root)),
@@ -2378,6 +2397,8 @@ def run_sync(
                     "imported_conversations",
                     "failed_conversations",
                     "imported_messages",
+                    "updated_messages",
+                    "conflicted_messages",
                     "deduplicated_messages",
                     "unchanged_messages",
                 )
@@ -2388,8 +2409,10 @@ def run_sync(
             status["next_run_at"] = _next_scheduled_run()
             if status["failed_conversations"]:
                 status["state"] = "error"
-                status["error_code"] = "sync_failed"
-                status["attention"] = "部分会话未完整导入（含解码或统计失败），原始微信记录未受影响。"
+                status["error_code"] = "message_conflicts" if status["conflicted_messages"] else "sync_failed"
+                status["attention"] = ("存在无法确认的新旧消息冲突，已保留两次原始导出与当前副本，增量检查点未推进。"
+                                       if status["conflicted_messages"] else
+                                       "部分会话未完整导入（含解码或统计失败），原始微信记录未受影响。")
             _write_status(status)
             return status
     except SyncFailure as exc:

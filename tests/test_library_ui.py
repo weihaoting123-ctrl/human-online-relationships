@@ -433,6 +433,73 @@ class LibraryBrowserTests(unittest.TestCase):
                 self.assertGreaterEqual(item['toggle']['x'], item['description']['right'], (width, item))
                 self.assertLessEqual(item['toggle']['width'], 48, (width, item))
 
+    def hold_next_conversation_read(self, fail=False):
+        self.page.evaluate('''fail => {
+          const originalFetch = window.fetch;
+          let held = false;
+          window.fetch = async (url, options) => {
+            const response = await originalFetch(url, options);
+            if (String(url) === '/api/library' && !held) {
+              held = true;
+              return new Promise(resolve => {
+                window.__releaseConversationRead = () => resolve(fail
+                  ? new Response(JSON.stringify({status: 'error', error: '合成旧请求失败'}),
+                      {status: 503, headers: {'Content-Type': 'application/json'}})
+                  : response);
+              });
+            }
+            return response;
+          };
+        }''', fail)
+
+    def reopen_second_conversation_while_first_read_is_pending(self):
+        self.open_metadata()
+        self.page.wait_for_function('typeof window.__releaseConversationRead === "function"')
+        self.page.locator('#conversation-close').click()
+        self.page.locator('#catalog-body .open-bundle').nth(1).click()
+        self.expect(self.page.locator('#case-title')).to_have_text('合成云舟')
+        self.page.locator('#manage-conversation').click()
+        self.expect(self.page.locator('#conversation-original')).to_contain_text('合成云舟')
+        self.expect(self.page.locator('#conversation-alias')).to_be_enabled()
+
+    def test_old_conversation_read_cannot_change_reopened_dialog_or_save_target(self):
+        self.hold_next_conversation_read()
+        self.reopen_second_conversation_while_first_read_is_pending()
+        self.page.locator('#conversation-alias').fill('云舟的新别名')
+        self.page.evaluate('''async () => {
+          window.__releaseConversationRead();
+          await new Promise(requestAnimationFrame); await new Promise(requestAnimationFrame);
+        }''')
+        self.expect(self.page.locator('#conversation-original')).to_contain_text('合成云舟')
+        self.expect(self.page.locator('#conversation-alias')).to_have_value('云舟的新别名')
+        self.page.locator('#conversation-save').click()
+        self.expect(self.page.locator('#conversation-feedback')).to_contain_text('已保存')
+        self.assertEqual(self.mutations[-1][1]['bundle_id'], 'fixture-1')
+        self.assertEqual(self.conversations[0]['alias'], '')
+        self.assertEqual(self.conversations[1]['alias'], '云舟的新别名')
+
+    def test_old_conversation_read_failure_cannot_pollute_reopened_dialog(self):
+        self.hold_next_conversation_read(fail=True)
+        self.reopen_second_conversation_while_first_read_is_pending()
+        self.page.evaluate('''async () => {
+          window.__releaseConversationRead();
+          await new Promise(requestAnimationFrame); await new Promise(requestAnimationFrame);
+        }''')
+        self.expect(self.page.locator('#conversation-original')).to_contain_text('合成云舟')
+        self.expect(self.page.locator('#conversation-feedback')).to_be_hidden()
+        self.expect(self.page.locator('#conversation-reload')).to_be_hidden()
+        self.expect(self.page.locator('#conversation-alias')).to_be_enabled()
+        self.expect(self.page.locator('#library-health-badge')).to_have_text('资料库可用')
+        self.assertEqual(self.mutations, [])
+
+    def test_save_rejects_a_dialog_that_no_longer_matches_active_conversation(self):
+        self.open_metadata()
+        self.expect(self.page.locator('#conversation-alias')).to_be_enabled()
+        self.page.evaluate("state.activeBundle = {...state.activeBundle, id: 'fixture-1'}")
+        self.page.locator('#conversation-save').click()
+        self.expect(self.page.locator('#conversation-feedback')).to_contain_text('当前会话已变化')
+        self.assertEqual(self.mutations, [])
+
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)

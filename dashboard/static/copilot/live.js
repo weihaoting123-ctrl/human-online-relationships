@@ -127,9 +127,10 @@
         if (!validPreview(value, scope)) throw new Error('invalid-preview');
         preview = value; showPreview(value);
         statusText = '请核对固定来源与持续授权；此时尚未读取新消息或调用模型。';
-      } catch (_) {
+      } catch (error) {
         if (epoch === generation) {
-          invalidate('无法准备限时范围，请检查本机设置后重新核对；尚未调用模型。'); changed();
+          invalidate(host.previewError(error,
+            '无法准备限时范围，请检查本机设置后重新核对；尚未调用模型。')); changed();
         }
       }
       finally { if (epoch === generation) preparing = false; changed(); }
