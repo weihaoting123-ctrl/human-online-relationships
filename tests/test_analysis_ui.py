@@ -10,6 +10,7 @@ import os
 import tempfile
 import threading
 import unittest
+from contextlib import ExitStack
 from pathlib import Path
 from unittest import mock
 from urllib.parse import urlparse
@@ -24,6 +25,32 @@ JOB_ID = 'b' * 48
 REPORT_ID = 'c' * 48
 SYNTHETIC_KEY = 'synthetic-ui-key-never-a-real-credential'
 XSS = '<img src=x onerror=alert(1)>'
+
+
+class PersistentAnalysisFixtureHandler(app.DashboardHandler):
+    # Browser isolation closes these connections after each test. Keeping the
+    # real framing/auth/security headers while reusing sockets within one page
+    # avoids ~30 TIME_WAIT sockets per test on Windows. Production is unchanged.
+    protocol_version = 'HTTP/1.1'
+    timeout = 5
+
+
+def create_analysis_fixture_server(token):
+    server = app.create_server(port=0, token=token)
+    server.RequestHandlerClass = PersistentAnalysisFixtureHandler
+    return server
+
+
+def stop_analysis_fixture_server(server, thread, timeout=5):
+    # shutdown() normally waits for one serve_forever poll. Bound even that
+    # wait, so a failed browser/fixture cannot hang the entire synthetic suite.
+    stopper = threading.Thread(target=server.shutdown, daemon=True)
+    stopper.start()
+    stopper.join(timeout=timeout)
+    server.server_close()
+    thread.join(timeout=timeout)
+    if stopper.is_alive() or thread.is_alive():
+        raise RuntimeError('Synthetic analysis server did not stop within its bound')
 
 
 @unittest.skipUnless(UI_ENABLED, 'Opt-in: set SHE_LOVE_ME_UI_TESTS=1 for synthetic browser tests')
@@ -62,7 +89,7 @@ class AnalysisBrowserTests(unittest.TestCase):
         ]
         for patch in cls.patches:
             patch.start()
-        cls.server = app.create_server(port=0, token='synthetic-analysis-test-token')
+        cls.server = create_analysis_fixture_server(token='synthetic-analysis-test-token')
         cls.thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
         cls.thread.start()
         cls.url = f'http://127.0.0.1:{cls.server.server_port}/'
@@ -75,14 +102,21 @@ class AnalysisBrowserTests(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls):
-        cls.browser.close()
-        cls.playwright.stop()
-        cls.server.shutdown()
-        cls.server.server_close()
-        cls.thread.join(timeout=5)
-        for patch in reversed(cls.patches):
-            patch.stop()
-        cls.temp.cleanup()
+        try:
+            try:
+                cls.browser.close()
+            finally:
+                try:
+                    cls.playwright.stop()
+                finally:
+                    stop_analysis_fixture_server(cls.server, cls.thread)
+        finally:
+            # All restoration callbacks run even if any resource close fails.
+            # ExitStack preserves exception chaining; no cleanup error is hidden.
+            with ExitStack() as cleanup:
+                cleanup.callback(cls.temp.cleanup)
+                for patch in cls.patches:
+                    cleanup.callback(patch.stop)
 
     def setUp(self):
         from playwright.sync_api import expect

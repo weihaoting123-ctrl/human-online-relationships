@@ -12,6 +12,10 @@
   let configDirty = false, expiryTimer = null, displayedReport = null;
   let configSequence = 0, reportSequence = 0;
   let activeJob = null, pollTimer = null, pollSequence = 0, cancelRequested = false;
+  let recoverySequence = 0;
+  const historyLimit = 20, historyOffset = { reports: 0, jobs: 0 };
+  const historySequence = { reports: 0, jobs: 0 };
+  let historySearchTimer = null;
   const selectedMode = () => document.querySelector('input[name="ai-analysis-mode"]:checked').value;
   const modeName = (mode) => mode === 'full' ? '全量文字' : '抽样文字';
   const send = (path, body) => api(path, { method: 'POST', body: JSON.stringify(body) });
@@ -276,9 +280,25 @@
     updateMode();
     $('#ai-scope-form').requestSubmit();
   });
-  async function loadHistory() {
-    const payload = await api('/api/ai/history');
+  function historyPath(kind) {
+    const params = new URLSearchParams({ offset: String(historyOffset[kind]), limit: String(historyLimit) });
+    const query = $('#ai-history-search').value.trim();
+    if (query) params.set('q', query);
+    return `/api/ai/${kind === 'reports' ? 'history' : 'jobs'}?${params}`;
+  }
+  function historyPagination(kind, payload, count) {
+    const total = Number.isSafeInteger(payload.total) ? payload.total : count;
+    const offset = historyOffset[kind];
+    $(`#ai-${kind}-prev`).disabled = offset === 0;
+    $(`#ai-${kind}-next`).disabled = !Number.isSafeInteger(payload.next_offset);
+    $(`#ai-${kind}-page`).textContent = total ? `${number(offset + 1)}—${number(Math.min(offset + count, total))} / ${number(total)} 条` : '0 条';
+  }
+  async function loadReports() {
+    const sequence = ++historySequence.reports;
+    const payload = await api(historyPath('reports'));
+    if (sequence !== historySequence.reports) return;
     const list = $('#ai-history-list'); list.replaceChildren();
+    historyPagination('reports', payload, payload.reports?.length || 0);
     if (!payload.reports?.length) { list.append(el('p', 'field-note', '尚无分析记录。报告和已保存的部分结果会保存在这里。')); return; }
     payload.reports.forEach((report) => {
       const button = el('button', 'history-item'); button.type = 'button';
@@ -292,6 +312,49 @@
       button.addEventListener('click', () => { if (!busy) loadReport(report.id); });
       list.append(button);
     });
+  }
+  async function loadTaskHistory() {
+    const sequence = ++historySequence.jobs;
+    const payload = await api(historyPath('jobs'));
+    if (sequence !== historySequence.jobs) return;
+    const list = $('#ai-job-history-list'); list.replaceChildren();
+    const jobs = Array.isArray(payload.jobs) ? payload.jobs : [];
+    historyPagination('jobs', payload, jobs.length);
+    if (!jobs.length) { list.append(el('p', 'field-note', '尚无分析任务。')); return; }
+    const names = { pending: '等待中', running: '进行中', completed: '已完成', error: '未完成 / 结果未知', cancelled: '已停止' };
+    jobs.forEach((job) => {
+      const button = el('button', 'history-item ai-task-item'); button.type = 'button';
+      const scope = job.scope || {}, value = job.progress || {};
+      const label = el('span'); label.append(el('strong', '', contact(scope.bundle_id)));
+      label.append(el('small', 'ai-task-state', names[job.state] || '状态未知'));
+      label.append(el('small', 'ai-task-detail', `${scope.date_from || ''} — ${scope.date_to || ''} · 分段 ${number(value.completed_segments)} / ${number(value.total_segments ?? job.plan?.segments)}`));
+      const attempts = Number.isSafeInteger(value.attempted_calls) && value.attempted_calls >= 0
+        ? `新调用尝试 ${number(value.attempted_calls)} 次` : '尝试次数未记录';
+      label.append(el('small', 'ai-task-detail', `${attempts} · 已复用 ${number(value.cached_calls)} 次`));
+      if (typeof job.error === 'string' && job.error) label.append(el('small', 'ai-task-detail', failureReason(job.error, job.error_detail)));
+      button.append(label, el('span', 'history-provider', `${providers[job.provider] || job.provider || ''} / ${job.model || ''}`), el('span', 'history-date', formatLocalTime(job.created_at)), el('span', '', '查看任务 →'));
+      button.addEventListener('click', () => { if (!busy) loadStoredJob(job.job_id); });
+      list.append(button);
+    });
+  }
+  async function loadHistory() {
+    await Promise.all([loadReports(), loadTaskHistory()]);
+  }
+  async function loadStoredJob(id) {
+    invalidate();
+    const sequence = ++reportSequence;
+    try {
+      const job = await api(`/api/ai/jobs/${encodeURIComponent(id)}`);
+      if (sequence !== reportSequence || busy) return;
+      if (['pending', 'running'].includes(job.state)) { watch(job, true); return; }
+      if (job.report_id) { await loadReport(job.report_id); return; }
+      displayedReport = null; cancelRequested = false;
+      $('#ai-result').hidden = true; $('#ai-resume-poll').hidden = true;
+      progress(job);
+      feedback(job.state === 'error'
+        ? failureReason(job.error || '分析未完成', job.error_detail)
+        : '这次任务没有生成报告；查看任务没有重新发送分析。', job.state === 'error');
+    } catch (error) { if (sequence === reportSequence) feedback(error.message, true); }
   }
   async function activate() {
     if (loaded) return;
@@ -442,10 +505,19 @@
     poll(activeJob.job_id || activeJob.id, pollSequence);
   }
   async function recoverJobs() {
-    const payload = await api('/api/ai/jobs');
-    if (activeJob) return;
-    const job = (Array.isArray(payload.jobs) ? payload.jobs : []).find((item) => ['pending', 'running'].includes(item.state));
-    if (job) watch(job, true);
+    const requested = ++recoverySequence;
+    if (activeJob || busy) return;
+    const selection = reportSequence, scopeRevision = revision, polling = pollSequence;
+    const current = () => requested === recoverySequence && selection === reportSequence
+      && scopeRevision === revision && polling === pollSequence && !activeJob && !busy;
+    try {
+      const payload = await api('/api/ai/jobs');
+      // Recovery is a background read. A newer user selection, scope, run,
+      // polling session, or recovery request always owns the current view.
+      if (!current()) return;
+      const job = (Array.isArray(payload.jobs) ? payload.jobs : []).find((item) => ['pending', 'running'].includes(item.state));
+      if (job) watch(job, true);
+    } catch (error) { if (current()) throw error; }
   }
   async function poll(jobId, sequence) {
     try {
@@ -501,7 +573,22 @@
     } catch (error) { cancelRequested = false; if (activeJob) progress(activeJob); feedback(error.message, true); }
   });
   $('#ai-resume-poll').addEventListener('click', () => { if (activeJob) watch(activeJob, true); });
-  $('#ai-refresh-history').addEventListener('click', () => Promise.all([loadHistory(), recoverJobs()]).catch((error) => feedback(error.message, true)));
+  $('#ai-refresh-history').addEventListener('click', () => {
+    historyOffset.reports = historyOffset.jobs = 0;
+    Promise.all([loadHistory(), recoverJobs()]).catch((error) => feedback(error.message, true));
+  });
+  ['reports', 'jobs'].forEach((kind) => {
+    ['prev', 'next'].forEach((direction) => $(`#ai-${kind}-${direction}`).addEventListener('click', () => {
+      historyOffset[kind] = Math.max(0, historyOffset[kind] + (direction === 'next' ? historyLimit : -historyLimit));
+      (kind === 'reports' ? loadReports() : loadTaskHistory()).catch((error) => feedback(error.message, true));
+    }));
+  });
+  $('#ai-history-search').addEventListener('input', () => {
+    clearTimeout(historySearchTimer);
+    historySequence.reports += 1; historySequence.jobs += 1;
+    historyOffset.reports = historyOffset.jobs = 0;
+    historySearchTimer = setTimeout(() => loadHistory().catch((error) => feedback(error.message, true)), 200);
+  });
   window.AiWorkspace = { activate, selectBundle, selectRange, setBundles(value) { bundles = value; populateBundles(); } };
   document.addEventListener('archive:modules', () => {
     if (!ArchiveShell.isEnabled('analysis')) invalidate();

@@ -11,7 +11,7 @@
   const state = {
     revision: 0, conversations: [], modules: [], configured: false, loaded: false,
     preview: null, previewBusy: false, runBusy: false, loading: false, enabling: false,
-    nativeTarget: null, nativeSeen: false, nativeSequence: 0, paused: false, compactReply: '',
+    nativeTarget: null, nativeSeen: false, nativeSequence: 0, paused: false, compactReply: '', recipient: null,
     mode: recognitionAvailable ? 'auto' : 'manual', modeEpoch: 0, observationVersion: 0,
     observationSeq: -1, observation: null, observationKey: '', bindingToken: null,
     sessionId: null, serverSeq: 0, bindingQueue: Promise.resolve(), bindingTimer: null,
@@ -28,6 +28,20 @@
   const moduleEnabled = (id) => moduleById(id)?.enabled === true;
   const selected = () => state.conversations.find((item) => item.bundle_id === $('#contact-select').value);
   const dateValue = (value) => typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : '';
+  // Only exact, fixed local errors may become actionable UI text. Never reflect
+  // arbitrary HTTP/provider bodies, paths, credentials or model output.
+  const previewErrors = Object.freeze({
+    '所选范围内没有可用的聊天文字；回复建议不读取语音或转写': '所选范围没有可用文字。请调整日期范围，或先同步聊天记录；语音与转写暂不用于回复建议。尚未调用模型。',
+    '日期格式无效': '日期格式无效，请重新选择开始和结束日期。尚未调用模型。',
+    '开始日期不能晚于结束日期': '开始日期不能晚于结束日期，请调整日期范围。尚未调用模型。',
+    '文字条数上限须为 1 至 200 的整数': '取用条数应为 1 至 200 的整数，请调整条数。尚未调用模型。',
+    '所选归档不可用或已变化，请重新预览': '归档已变化或暂不可用，请刷新状态并重新核对范围。尚未调用模型。',
+    '本机模型配置不可用，请检查 AI 分析设置': '模型配置暂不可用，请在主控制台检查 AI 分析连接设置。尚未调用模型。',
+    '请先配置模型服务，再预览限时建议': '请在主控制台配置模型连接，保存后刷新助手状态。尚未调用模型。',
+    '当前会话候选已变化、过期或不可用，请重新识别、预览并核对': '当前会话识别已变化或过期，请回到微信，待标题稳定后重新核对。尚未调用模型。',
+    '限时建议需要有效窗口候选，且不能携带手动草稿': '限时建议需要识别当前微信会话，请切回微信并核对唯一归档。尚未调用模型。',
+  });
+  const previewError = (error, fallback) => typeof error?.previewMessage === 'string' ? error.previewMessage : fallback;
   function feedback(message = '', error = false) {
     $('#feedback').textContent = message;
     $('#feedback').classList.toggle('is-error', error);
@@ -42,7 +56,18 @@
         headers: { 'Content-Type': 'application/json' }, signal: controller.signal,
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       });
-      if (!response.ok) throw new Error('request-rejected');
+      if (!response.ok) {
+        const error = new Error('request-rejected');
+        if (path === '/api/copilot/preview' || path === '/api/copilot/live/preview') {
+          try {
+            const rejected = await response.json();
+            if (typeof rejected?.error === 'string' && Object.hasOwn(previewErrors, rejected.error)) {
+              error.previewMessage = previewErrors[rejected.error];
+            }
+          } catch (_) { /* Non-JSON or unknown errors keep the fixed fallback. */ }
+        }
+        throw error;
+      }
       const payload = await response.json();
       if (!payload || typeof payload !== 'object' || Array.isArray(payload)
         || (path === '/api/copilot/binding'
@@ -378,12 +403,13 @@
       name: safeText(item.alias || item.contact_display || item.source?.contact || '未命名会话', 512),
       date_from: dateValue(library ? item.source?.date_range?.[0] : item.date_from),
       date_to: dateValue(library ? item.source?.date_range?.[1] : item.date_to),
+      message_count: Number.isSafeInteger(library ? item.source?.message_count : item.message_count)
+        ? library ? item.source.message_count : item.message_count : null,
     }));
   }
   async function refresh() {
     if (state.loading || state.enabling) return;
     state.loading = true;
-    invalidate();
     renderControls();
     try {
       const [status, modules] = await Promise.all([request('/api/copilot/status'), request('/api/modules')]);
@@ -392,10 +418,22 @@
         const library = await request('/api/library');
         items = normalizeConversations(library.conversations, true);
       }
-      const previous = $('#contact-select').value;
+      const previous = selected();
+      const next = items.find((item) => item.bundle_id === previous?.bundle_id);
+      const recipient = { provider: safeText(status.provider, 80), model: safeText(status.model, 120),
+        endpoint: safeText(status.endpoint, 300) };
+      const nextModules = Array.isArray(modules.modules) ? modules.modules : [];
+      const sourceChanged = Boolean(previous && (!next || ['date_from', 'date_to', 'message_count']
+        .some((key) => previous[key] !== next[key])));
+      const configurationChanged = state.loaded && (state.configured !== (status.configured === true)
+        || JSON.stringify(state.recipient) !== JSON.stringify(recipient)
+        || ['copilot', 'analysis'].some((id) => moduleEnabled(id)
+          !== (nextModules.find((item) => item.id === id)?.enabled === true)));
+      if (sourceChanged || configurationChanged) invalidate({ clearPerson: !next });
       state.conversations = items;
-      state.modules = Array.isArray(modules.modules) ? modules.modules : [];
+      state.modules = nextModules;
       state.configured = status.configured === true;
+      state.recipient = recipient;
       state.loaded = true;
       const select = $('#contact-select');
       select.replaceChildren(make('option', '', '请选择一个会话'));
@@ -405,10 +443,12 @@
         option.value = item.bundle_id;
         select.append(option);
       }
-      select.value = items.some((item) => item.bundle_id === previous) ? previous : '';
+      select.value = next?.bundle_id || '';
       if (!select.value) $('#latest-draft').value = '';
-      renderContext(true);
+      renderContext(sourceChanged || !next);
+      if (sourceChanged || configurationChanged) feedback('归档、模型或功能状态已变化，请重新核对范围。');
     } catch (_) {
+      invalidate();
       state.loaded = false;
       state.configured = false;
       state.modules = [];
@@ -485,8 +525,9 @@
       state.preview = payload;
       renderPreview(payload);
       feedback('范围已核对。请检查接收方，决定是否发送这一次。');
-    } catch (_) {
-      if ((scope?.binding_revision ?? revision) === state.revision) feedback('无法准备发送范围。请检查本机设置后重新核对；尚未调用模型。', true);
+    } catch (error) {
+      if ((scope?.binding_revision ?? revision) === state.revision) feedback(previewError(error,
+        '无法准备发送范围。请检查本机设置后重新核对；尚未调用模型。'), true);
     } finally { state.previewBusy = false; renderControls(); }
   }
   function validResult(payload) {
@@ -516,7 +557,7 @@
     }
   }
   function renderResult(payload) {
-    const labels = { natural: '自然一点', warm: '温暖一点', invite: '试着邀约' };
+    const labels = { natural: '自然一点', warm: '温暖一点', invite: '接着聊' };
     $('#replies-empty').hidden = true;
     for (const reply of payload.replies) {
       const card = make('article', 'reply-card');
@@ -715,7 +756,8 @@
     });
   }
   live = window.CopilotLive?.create({ request, ready, scope: currentScope,
-    mode: () => state.mode, busy: () => state.previewBusy || state.runBusy || state.loading || state.enabling,
+    mode: () => state.mode, busy: () => state.previewBusy || state.runBusy || state.enabling
+      || (state.loading && !live?.blocked()), previewError,
     revision: () => state.revision, fresh: freshAutomatic, settled: () => state.bindingQueue, controls: renderControls,
     reset: invalidate, clearResult, renderResult, validResult, name: () => selected()?.name || '',
   });

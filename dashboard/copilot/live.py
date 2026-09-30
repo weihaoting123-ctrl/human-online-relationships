@@ -78,7 +78,7 @@ def _digest(value):
 def _end(session, reason):
     release_reader(session['scope']['bundle_id'])
     session.update(state='stopped', reason=reason, result=None, pending=[], pending_peer=False,
-                   sample=[], names=[], seen={}, local_servers={}, anchors=set(), cursor=None)
+                   sample=[], context=[], names=[], seen={}, local_servers={}, anchors=set(), cursor=None)
 
 
 def _dto(session, *, report_busy=False):
@@ -213,6 +213,7 @@ def start(data_dir, contacts_dir, request, *, admission):
             raise ai.AnalysisError('限时会话数量达到上限，请稍后再试')
         session = {**prepared, 'session_id': secrets.token_hex(24), 'expires': _now() + 900,
                    'state': 'active', 'reason': 'BASELINE', 'busy': True, 'attempts': 0,
+                   'context': list(prepared['sample']),
                    'last_call': float('-inf'), 'result': None, 'pending': [], 'pending_peer': False,
                    'pending_since': _now(), 'seen': {}, 'local_servers': {},
                    'anchors': set(), 'cursor': None, 'identity': None,
@@ -249,6 +250,25 @@ def _row_keys(row):
     if row['server_id'] != '0':
         keys.add('s:' + _digest(row['server_id']))
     return keys
+
+
+def _remember_context(session, rows):
+    """Keep already-granted active text, evicting oldest rows to fit the budget.
+
+    Trigger batches remain separate: our reply cancels a stale suggestion, not
+    the context required to understand the next reply. Baseline and away-time
+    observations never call this helper and cannot be replayed on focus return.
+    """
+    incoming = [{'date': row['timestamp'][:10], 'sender': '我' if row['sender'] == 'me' else '对方',
+                 'text': ai.redact_text(row['text'], session['names'])} for row in rows]
+    if sum(len(row['text']) for row in incoming) > LIMITS['max_batch_chars']:
+        _end(session, 'BATCH_OVERFLOW')
+        return
+    context = session['context'] + incoming
+    chars = sum(len(row['text']) for row in context)
+    while context and (len(context) > LIMITS['max_context_messages'] or chars > LIMITS['max_context_chars']):
+        chars -= len(context.pop(0)['text'])
+    session['context'] = context
 
 
 def _observe(session, value, *, baseline=False):
@@ -303,6 +323,10 @@ def _observe(session, value, *, baseline=False):
     if session['state'] != 'exhausted' and (len(fresh) > 20 or sum(len(row['text']) for row in fresh) > 4000):
         _end(session, 'BATCH_OVERFLOW')
         return
+    if fresh and session['state'] == 'active':
+        _remember_context(session, fresh)
+        if session['state'] == 'stopped':
+            return
     for row in fresh:
         if row['sender'] == 'me':
             session['pending'] = []
@@ -439,12 +463,12 @@ def tick(data_dir, contacts_dir, request, *, admission):
             incoming = [{'date': row['timestamp'][:10], 'sender': '我' if row['sender'] == 'me' else '对方',
                          'text': ai.redact_text(row['text'], session['names'])} for row in session['pending']]
             if (len(incoming) > 20 or sum(len(row['text']) for row in incoming) > 4000
-                    or len(session['sample']) + len(incoming) > 200
-                    or sum(len(row['text']) for row in session['sample'] + incoming) > 20000):
+                    or len(session['context']) > 200
+                    or sum(len(row['text']) for row in session['context']) > 20000):
                 _end(session, 'BATCH_OVERFLOW')
                 return _dto(session)
             content = {'date_from': session['scope']['date_from'], 'date_to': session['scope']['date_to'],
-                       'direction': session['scope']['direction'], 'sample': session['sample'] + incoming,
+                       'direction': session['scope']['direction'], 'sample': list(session['context']),
                        'reply_style': session['scope']['reply_style'],
                        'latest_draft': ''}
             context_revision = session['context_revision']

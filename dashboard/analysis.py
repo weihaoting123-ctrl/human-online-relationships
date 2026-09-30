@@ -21,6 +21,7 @@ import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import parse_qs
 
 from dashboard.search import _message_date, _safe_path, _signature, _writer_lock
 from dashboard.analysis_metrics import _message_time
@@ -603,15 +604,55 @@ def job_status(data_dir, job_id):
         return _with_legacy_timeline(value)
 
 
-def jobs(data_dir):
+def _history_page(items, key, *, offset, limit, query):
+    if (type(offset) is not int or not 0 <= offset <= 1_000_000
+            or type(limit) is not int or not 1 <= limit <= 100
+            or not isinstance(query, str) or len(query) > 200):
+        raise AnalysisError("历史分页参数无效")
+    terms = query.casefold().split()
+    if terms:
+        def matches(item):
+            scope = item.get("scope") or {}
+            metadata = " ".join(str(value or "") for value in (
+                item.get("created_at"), item.get("provider"), item.get("model"), item.get("state"),
+                scope.get("bundle_id"), scope.get("date_from"), scope.get("date_to"), scope.get("focus"),
+            )).casefold()
+            return all(term in metadata for term in terms)
+        items = [item for item in items if matches(item)]
+    total = len(items)
+    return {"status": "ok", key: items[offset:offset + limit], "total": total,
+            "offset": offset, "limit": limit,
+            "next_offset": offset + limit if offset + limit < total else None}
+
+
+def history_request(query, *, default_limit=100):
+    """Parse only bounded, read-only history navigation parameters."""
+    try:
+        values = parse_qs(query, keep_blank_values=True, strict_parsing=True, max_num_fields=3)
+        if set(values) - {"offset", "limit", "q"} or any(len(value) != 1 for value in values.values()):
+            raise ValueError
+        numbers = {}
+        for key, default in (("offset", 0), ("limit", default_limit)):
+            value = values.get(key, [str(default)])[0]
+            if not re.fullmatch(r"[0-9]{1,7}", value):
+                raise ValueError
+            numbers[key] = int(value)
+        result = {**numbers, "query": values.get("q", [""])[0]}
+        _history_page([], "items", **result)
+        return result
+    except (ValueError, TypeError):
+        raise AnalysisError("历史分页参数无效") from None
+
+
+def jobs(data_dir, *, offset=0, limit=20, query=""):
     root = _root(data_dir)
-    paths = sorted(root.glob("job-*.json"), key=lambda path: path.stat().st_mtime, reverse=True)[:20]
+    paths = sorted(root.glob("job-*.json"), key=lambda path: (path.stat().st_mtime_ns, path.name), reverse=True)
     items = []
     for path in paths:
         value = job_status(data_dir, path.stem[4:])
         items.append({key: value[key] for key in ("job_id", "state", "created_at", "scope", "provider", "model",
                                                  "plan", "progress", "report_id", "error", "error_detail", "cancel_requested") if key in value})
-    return {"status": "ok", "jobs": items}
+    return _history_page(items, "jobs", offset=offset, limit=limit, query=query)
 
 
 def cancel(data_dir, job_id):
@@ -626,14 +667,14 @@ def cancel(data_dir, job_id):
     return job_status(data_dir, job_id)
 
 
-def history(data_dir):
+def history(data_dir, *, offset=0, limit=100, query=""):
     reports = []
     for path in _root(data_dir).glob("report-*.json"):
         value = _read(path)
         if isinstance(value, dict):
             reports.append({key: value.get(key) for key in ("id", "created_at", "provider", "model", "scope", "sample_messages", "mode", "coverage")})
-    reports.sort(key=lambda item: item.get("created_at", ""), reverse=True)
-    return {"status": "ok", "reports": reports[:100]}
+    reports.sort(key=lambda item: (item.get("created_at", "") or "", item.get("id", "") or ""), reverse=True)
+    return _history_page(reports, "reports", offset=offset, limit=limit, query=query)
 
 
 def report(data_dir, report_id):

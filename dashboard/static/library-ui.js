@@ -7,6 +7,7 @@
   let library = { conversations: [], tags: [], health: {} };
   let loaded = false, librarySequence = 0, moduleSequence = 0;
   let editing = null, editingTag = null, saving = false, tagSaving = false, moduleSaving = false;
+  let conversationSequence = 0, dialogBundleId = null;
   const dialog = $('#conversation-dialog');
   const send = (path, body) => api(path, { method: 'POST', body: JSON.stringify(body) });
   const activeTags = () => library.tags.filter((tag) => !tag.deleted);
@@ -166,7 +167,7 @@
       if (sequence !== librarySequence) return;
       library = { conversations: payload.conversations || [], tags: payload.tags || [], health: payload.health || {} };
       loaded = true; renderTags(); renderTrash(); renderHealth(); applyCatalogMetadata();
-    } catch (error) { renderHealth(true); throw error; }
+    } catch (error) { if (sequence === librarySequence) renderHealth(true); throw error; }
   }
   function invalidateCatalogRead() {
     state.stateSequence += 1;
@@ -211,23 +212,42 @@
     $('#conversation-fields').disabled = false; $('#conversation-hide').disabled = false;
   }
   async function reloadConversation() {
-    if (saving) return;
-    const id = editing?.bundle_id || state.activeBundle?.id;
+    if (saving || !dialog.open || !dialogBundleId) return;
+    const id = dialogBundleId, sequence = ++conversationSequence;
+    const current = () => sequence === conversationSequence && dialog.open && dialogBundleId === id;
     $('#conversation-fields').disabled = true; $('#conversation-hide').disabled = true;
-    try { await refreshLibrary(); populateConversation(metadata(id)); feedback('#conversation-feedback'); }
-    catch (error) { feedback('#conversation-feedback', error.message, true); $('#conversation-reload').hidden = false; }
+    try {
+      await refreshLibrary();
+      if (!current()) return;
+      if (state.activeBundle?.id !== id) throw new Error('当前会话已变化，请关闭后重新打开资料。');
+      populateConversation(metadata(id)); feedback('#conversation-feedback');
+    } catch (error) {
+      if (!current()) return;
+      feedback('#conversation-feedback', error.message, true); $('#conversation-reload').hidden = false;
+    }
   }
   $('#manage-conversation').addEventListener('click', () => {
     if (!state.activeBundle) return;
+    conversationSequence += 1; dialogBundleId = state.activeBundle.id;
     editing = null; feedback('#conversation-feedback');
+    $('#conversation-original').textContent = `正在读取 ${displayName(state.activeBundle)} 的本机会话资料…`;
     dialog.showModal(); reloadConversation();
   });
   $('#conversation-close').addEventListener('click', () => { if (!saving) dialog.close(); });
   dialog.addEventListener('cancel', (event) => { if (saving) event.preventDefault(); });
-  dialog.addEventListener('close', () => { editing = null; $('#manage-conversation').focus(); });
+  dialog.addEventListener('close', () => {
+    // A queued close event from the previous opening must not reset a newly
+    // opened dialog. Its reads are already invalidated by the new sequence.
+    if (dialog.open) return;
+    conversationSequence += 1; dialogBundleId = null; editing = null;
+    if ($('#manage-conversation').getClientRects().length) $('#manage-conversation').focus();
+  });
   $('#conversation-reload').addEventListener('click', reloadConversation);
   async function saveConversation(hidden = false) {
     if (saving || !editing) return;
+    if (!dialog.open || dialogBundleId !== editing.bundle_id || state.activeBundle?.id !== dialogBundleId) {
+      feedback('#conversation-feedback', '当前会话已变化，请关闭后重新打开资料。', true); return;
+    }
     saving = true;
     $('#conversation-fields').disabled = true; $('#conversation-hide').disabled = true;
     $('#conversation-close').disabled = true; $('#conversation-reload').disabled = true;

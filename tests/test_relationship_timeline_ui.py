@@ -5,6 +5,7 @@ import copy
 import os
 import unittest
 from datetime import datetime, timedelta, timezone
+from urllib.parse import urlparse
 
 import test_library_ui as fixtures
 from dashboard.relationship_timeline import NOTICES
@@ -78,7 +79,8 @@ class RelationshipTimelineBrowserTests(unittest.TestCase):
         self.pending_preview = None
         self.page.route('**/api/bundles/*', self.detail_response)
         self.page.route('**/api/ai/preview', self.preview_response)
-        self.page.route('**/api/ai/history', lambda route: self.fixture.reply(route, {'reports': [self.report()]}))
+        self.page.route(lambda url: url.startswith(self.fixture.url) and urlparse(url).path == '/api/ai/history',
+                        self.history_response)
         self.page.route('**/api/ai/reports/timeline-fixture', lambda route: self.fixture.reply(route, self.report()))
         self.page.emulate_media(color_scheme='light', reduced_motion='reduce')
         self.page.reload(wait_until='networkidle')
@@ -104,6 +106,10 @@ class RelationshipTimelineBrowserTests(unittest.TestCase):
                              'total_segments': 2, 'completed_segments': 1 if self.partial else 2},
                 'metrics': {'timeline': self.local}, 'result': {'summary': '合成报告', 'timeline': self.semantic}}
 
+    def history_response(self, route):
+        self.fixture.reply(route, {'status': 'ok', 'reports': [self.report()],
+                                  'total': 1, 'offset': 0, 'limit': 20, 'next_offset': None})
+
     def preview_response(self, route):
         scope = route.request.post_data_json
         self.fixture.mutations.append(('/api/ai/preview', scope))
@@ -124,6 +130,17 @@ class RelationshipTimelineBrowserTests(unittest.TestCase):
         self.page.locator('[data-view="analysis-workspace"]').click()
         self.page.locator('#ai-history-list .history-item').click()
         self.expect(self.page.locator('#ai-relationship-timeline')).to_be_visible()
+
+    def test_history_fixture_handles_paginated_and_legacy_queries(self):
+        payloads = self.page.evaluate('''async () => Promise.all([
+          '/api/ai/history', '/api/ai/history?offset=0&limit=20'
+        ].map(path => api(path)))''')
+        self.assertEqual([payload['reports'][0]['id'] for payload in payloads],
+                         ['timeline-fixture', 'timeline-fixture'])
+        self.assertEqual([payload['total'] for payload in payloads], [1, 1])
+        self.open_report()
+        self.expect(self.page.locator('#ai-reports-page')).to_have_text('1—1 / 1 条')
+        self.expect(self.page.locator('#ai-reports-next')).to_be_disabled()
 
     def capture(self, name, full_page=True):
         if os.environ.get('SHE_LOVE_ME_UI_SCREENSHOTS') != '1':

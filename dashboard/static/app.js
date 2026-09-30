@@ -1,6 +1,41 @@
 /* Catalog and local aggregate statistics. Shared services live in core.js;
  * navigation lives in shell.js and does not depend on optional AI code. */
 
+let catalogSyncRun = null, pendingCatalogSyncRun = null;
+const syncRun = (sync) => {
+  const time = Date.parse(sync?.last_run_at || '');
+  return Number.isFinite(time) ? { time, key: `${time}:${sync.state}` } : null;
+};
+function acknowledgeCatalogSync(sync) {
+  const run = syncRun(sync);
+  catalogSyncRun = run?.key || '';
+  if (!pendingCatalogSyncRun || (sync?.state === 'completed' && run?.time >= pendingCatalogSyncRun.time)) {
+    pendingCatalogSyncRun = null;
+    $('#catalog-sync-update').hidden = true;
+  }
+}
+function notifyCatalogSync(sync) {
+  const run = syncRun(sync);
+  const changed = Number(sync.imported_messages || 0) > 0 || Number(sync.updated_messages || 0) > 0 || Number(sync.imported_conversations || 0) > 0;
+  if (catalogSyncRun === null || !run || run.key === catalogSyncRun || sync.state !== 'completed' || !changed) return;
+  pendingCatalogSyncRun = run;
+  $('#catalog-sync-update-text').textContent = `${Number(sync.failed_conversations || 0) ? '部分新记录已归档' : '有新的本机归档'} · 新增 ${number(sync.imported_messages)} 条消息，更新 ${number(sync.updated_messages)} 条。刷新后更新清单与统计。`;
+  $('#catalog-sync-update').hidden = false;
+}
+async function refreshCopilotStatus() {
+  const badge = $('#copilot-desktop-status');
+  try {
+    const payload = await api('/api/copilot/desktop', { cache: 'no-store', signal: AbortSignal.timeout(6000) });
+    const desktop = payload.desktop;
+    if (!desktop || typeof desktop.supported !== 'boolean' || typeof desktop.installed !== 'boolean'
+      || !['running', 'stopped', 'unknown', 'unavailable', 'launch_requested'].includes(desktop.state)) throw new Error();
+    badge.textContent = !desktop.supported ? '网页可用' : !desktop.installed ? '待部署'
+      : desktop.state === 'running' ? '运行中' : desktop.state === 'stopped' ? '可启动' : '待确认';
+    badge.title = desktop.state === 'running' ? '桌面助手进程已在运行；进入助手查看跟随及授权状态。'
+      : '打开回复助手，查看本机悬浮窗设置。';
+  } catch (_) { badge.textContent = '待确认'; badge.title = '状态暂时无法读取，可打开回复助手核对。'; }
+}
+
 function metric(label, value, unit, note) {
   const card = el('article', 'metric');
   card.append(el('div', 'metric-label', label));
@@ -276,7 +311,9 @@ function initializeCatalog() {
 
 function renderSync(sync = {}) {
   state.syncStatus = sync;
-  const hasFailures = Number(sync.failed_conversations || 0) > 0;
+  notifyCatalogSync(sync);
+  const hasConflicts = Number(sync.conflicted_messages || 0) > 0 || sync.error_code === 'message_conflicts';
+  const hasFailures = Number(sync.failed_conversations || 0) > 0 || hasConflicts;
   const states = {
     not_configured: '尚未启用',
     ready: '等待首次同步',
@@ -302,8 +339,8 @@ function renderSync(sync = {}) {
       ? (sync.mode === 'scheduled' ? '自动计划已启用' : '已启用 · 手动触发')
       : '未启用');
   const conversations = `${number(sync.imported_conversations)} 处理 · ${number(sync.skipped_conversations)} 跳过 · ${number(sync.failed_conversations)} 失败`;
-  const messages = `${number(sync.imported_messages)} 新增 · ${number(sync.unchanged_messages)} 未变化`;
-  $('#incremental-status').textContent = `最近一轮：${number(sync.processed_databases)} 个变更分片校对，${number(sync.skipped_databases)} 个分片跳过；${number(sync.skipped_conversations)} 个会话无需重复导出，新增 ${number(sync.imported_messages)} 条消息。源文件仍需校验，补同步的历史消息也会保留。`;
+  const messages = `${number(sync.imported_messages)} 新增 · ${number(sync.updated_messages)} 更新 · ${number(sync.conflicted_messages)} 冲突待核对 · ${number(sync.unchanged_messages)} 未变化`;
+  $('#incremental-status').textContent = `最近一轮：${number(sync.processed_databases)} 个变更分片校对，${number(sync.skipped_databases)} 个分片跳过；${number(sync.skipped_conversations)} 个会话无需重复导出，新增 ${number(sync.imported_messages)} 条消息、更新 ${number(sync.updated_messages)} 条、${number(sync.conflicted_messages)} 条冲突待核对。源文件仍需校验，补同步的历史消息也会保留。`;
   const details = $('#sync-details');
   details.replaceChildren();
   [
@@ -331,7 +368,9 @@ function renderSync(sync = {}) {
       ? '部分会话未能导入；其他会话已安全归档，微信原始记录保持不变。'
       : '',
   };
-  attention.textContent = attentionMessages[sync.state] || '';
+  attention.textContent = hasConflicts
+    ? '部分消息存在冲突，已保留原记录，冲突版本未写入。请先备份并核对本机导出，再重新同步。'
+    : attentionMessages[sync.state] || '';
   attention.hidden = !(sync.attention || hasFailures);
 }
 
@@ -700,6 +739,7 @@ async function loadState(reloadActive = false) {
   window.LibraryWorkspace?.setBundles(state.bundles);
   window.AiWorkspace?.setBundles(state.bundles);
   renderEnvironment(payload);
+  acknowledgeCatalogSync(payload.sync || {});
   renderSync(payload.sync || {});
   renderBundles();
   if (reloadActive && epoch === state.interactionEpoch && activeId === state.activeBundle?.id && state.bundles.some((item) => item.id === activeId)) {
@@ -899,21 +939,31 @@ $('#report-button').addEventListener('click', async () => {
   }
 });
 
-$('#refresh-button').addEventListener('click', async () => {
+async function refreshCatalog() {
   const button = $('#refresh-button');
+  if (button.disabled) return;
   setBusy(button, true, '刷新中…');
+  setBusy($('#catalog-sync-refresh'), true, '刷新中…');
   invalidateSearch();
   try { await loadState(true); if (state.filters.mode === 'content' && state.filters.query.trim()) await searchContent(); }
   catch (error) { showNotice(error.message, true); }
-  finally { setBusy(button, false); }
-});
+  finally { setBusy(button, false); setBusy($('#catalog-sync-refresh'), false); }
+}
+$('#refresh-button').addEventListener('click', refreshCatalog);
+$('#catalog-sync-refresh').addEventListener('click', refreshCatalog);
 
 function renderArchive(archive) {
   const media = archive?.media || {};
   const classes = archive?.classification || {};
   const count = (n) => (Number.isFinite(Number(n)) ? Number(n) : 0).toLocaleString('zh-CN');
-  const phase = media.refreshing ? '正在补充图片预览' : media.state === 'completed' ? '文件归档完成' : media.state === 'running' ? '文件归档进行中' : '等待归档状态';
-  $('#archive-summary').textContent = `${phase} · ${count(media.archived_files)} / ${count(media.total_files)} 个文件 · ${count(media.viewable_images)} 个可查看图片记录 · ${count(classes.classified_conversations)} 个会话已分类。本轮附件处理 ${count(media.processed_files)}、跳过 ${count(media.skipped_existing_files)}；分类处理 ${count(classes.processed_conversations)}、跳过 ${count(classes.skipped_conversations)}。`;
+  const mediaStates = { completed: '文件归档完成', running: '文件归档进行中', partial: '文件归档部分完成', error: '文件归档需检查', blocked: '文件归档待处理' };
+  const mediaErrors = {
+    media_account_binding_required: '附件与聊天归档的账号关联尚未确认，已停止本轮附件读取。请先完成目标账号的本机同步，再重新归档；已有附件副本保留。',
+    needs_account_selection: '检测到多个可用账号，附件归档已停止。请先在本机确认目标账号，再重新同步与归档；已有附件副本保留。',
+  };
+  const mediaError = Object.hasOwn(mediaErrors, media.error_code) ? mediaErrors[media.error_code] : '';
+  const phase = media.refreshing ? '正在补充图片预览' : mediaStates[media.state] || '等待归档状态';
+  $('#archive-summary').textContent = `${phase} · ${count(media.archived_files)} / ${count(media.total_files)} 个文件 · ${count(media.viewable_images)} 个可查看图片记录 · ${count(classes.classified_conversations)} 个会话已分类。本轮附件处理 ${count(media.processed_files)}、跳过 ${count(media.skipped_existing_files)}、失败 ${count(media.failed_files)}；分类处理 ${count(classes.processed_conversations)}、跳过 ${count(classes.skipped_conversations)}。${mediaError}`;
   $('#total-images').textContent = media.viewable_images === undefined ? '—' : count(media.viewable_images);
   const voice = archive?.voice || {}, transcription = archive?.voice_transcription || {};
   const voiceStates = { completed: '语音已归档', running: '正在归档语音', partial: '部分语音已归档', error: '语音归档需检查', blocked: '语音归档待处理', not_started: '尚未归档语音' };
@@ -924,7 +974,7 @@ function renderArchive(archive) {
   voiceBadge.classList.toggle('is-warning', ['error', 'partial', 'blocked'].includes(voice.state) || ['partial', 'error'].includes(transcription.state));
   $('#voice-archive-summary').textContent = `已保存 ${count(voice.archived_voice_messages)} / ${count(voice.total_voice_messages)} 条语音的录音；本机共保留 ${count(voice.unique_audio_files)} 份独立音频。${count(voice.missing_voice_messages)} 条暂未找到本机音频。`;
   const voiceCounts = $('#voice-archive-counts'); voiceCounts.replaceChildren();
-  [['已完成转写', `${count(transcription.transcribed_audio)} 个音频`], ['待转写', `${count(transcription.pending_audio)} 个音频`], ['可回听', `${count(transcription.playable_audio)} 个音频`], ['已附到消息', `${count(transcription.attached_messages)} 条`]].forEach(([title, value]) => {
+  [['已完成转写', `${count(transcription.transcribed_audio)} 个音频`], ['待转写', `${count(transcription.pending_audio)} 个音频`], ['可回听', `${count(transcription.playable_audio)} 个音频`], ['本轮新增回填', `${count(transcription.attached_messages)} 条`]].forEach(([title, value]) => {
     const item = el('div'); item.append(el('strong', '', title), el('span', '', value)); voiceCounts.append(item);
   });
   const transcriptionStates = { running: '正在本机转写', complete: '本轮转写完成', partial: '部分音频转写失败，已保留成功结果', pending: '转写等待继续', error: '本轮转写需检查', needs_runtime: '转写准备中', needs_archive: '等待语音归档', not_started: '尚未开始转写' };
@@ -947,6 +997,8 @@ api('/api/sync-status').then((payload) => renderArchive(payload.archive || {})).
 });
 
 initializeCatalog();
+refreshCopilotStatus();
+document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshCopilotStatus(); });
 loadState(false).catch((error) => {
   $('#environment-badge').textContent = '服务异常';
   showNotice(error.message, true);

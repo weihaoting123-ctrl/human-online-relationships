@@ -81,6 +81,11 @@ class CopilotBrowserTests(unittest.TestCase):
         self.analysis_enabled = True
         self.modules_override = None
         self.status_conversations = None
+        self.status_model = 'synthetic-model'
+        self.hold_status = False
+        self.pending_status = None
+        self.preview_error = None
+        self.live_preview_error = None
         self.hold_binding = False
         self.pending_binding = None
         self.binding_identity = None
@@ -142,12 +147,16 @@ class CopilotBrowserTests(unittest.TestCase):
                  'date_range': ['2026-03-02', '2026-09-20'], 'message_count': 123}}
                 for i, name in enumerate(['合成青禾', '合成云舟', XSS])]})
         elif path == '/api/copilot/status':
-            self.reply(route, {'status': 'ok', 'enabled': self.enabled, 'configured': True,
-                'provider': 'openai', 'model': 'synthetic-model',
+            response = {'status': 'ok', 'enabled': self.enabled, 'configured': True,
+                'provider': 'openai', 'model': self.status_model,
                 'endpoint': 'https://api.openai.com/v1/chat/completions',
                 'capabilities': {'archive_context': True, 'live_capture': False, 'auto_send': False,
                                  'max_messages': 200, 'max_chars': 20000, 'max_calls': 1},
-                **({'conversations': self.status_conversations} if self.status_conversations is not None else {})})
+                **({'conversations': self.status_conversations} if self.status_conversations is not None else {})}
+            if self.hold_status:
+                self.pending_status = (route, response)
+            else:
+                self.reply(route, response)
         elif path == '/api/copilot/binding/start':
             self.binding_identity = None
             self.binding_session_counter += 1
@@ -181,6 +190,9 @@ class CopilotBrowserTests(unittest.TestCase):
                         'reason': 'LIVE_WAITING', 'binding_revision': body.get('binding_revision', 0),
                         'remaining_seconds': 900, 'calls_used': 0, 'calls_remaining': 6, 'result': None}
             if action == 'preview':
+                if self.live_preview_error is not None:
+                    self.reply(route, {'status': 'error', 'error': self.live_preview_error}, 400)
+                    return
                 response = {'status': 'ok', 'preview_id': 'e' * 48,
                     'binding_revision': body['binding_revision'], 'scope': body,
                     'binding_required': True, 'account_verified': False,
@@ -214,6 +226,9 @@ class CopilotBrowserTests(unittest.TestCase):
                     return
             self.reply(route, response)
         elif path == '/api/copilot/preview':
+            if self.preview_error is not None:
+                self.reply(route, {'status': 'error', 'error': self.preview_error}, 400)
+                return
             response = {'status': 'ok', 'preview_id': 'a' * 48, 'binding_revision': body['binding_revision'],
                 'binding_required': 'binding_token' in body, 'account_verified': False,
                 'scope': body, 'recipient': {'configured': True, 'provider': 'openai', 'model': 'synthetic-model',
@@ -302,6 +317,83 @@ class CopilotBrowserTests(unittest.TestCase):
         self.expect(self.page.locator('#date-from')).to_have_value('2026-03-02')
         self.expect(self.page.locator('#date-to')).to_have_value('2026-09-20')
         self.assertEqual(self.page.locator('input[type=checkbox]:checked').count(), 0)
+
+    def test_unchanged_status_refresh_preserves_chosen_range_draft_style_and_preview(self):
+        self.open()
+        self.select()
+        self.page.locator('#date-from').fill('2026-08-01')
+        self.page.locator('#max-messages').fill('30')
+        self.page.locator('#latest-draft').fill('SYNTHETIC_DRAFT')
+        self.page.locator('#reply-tone').select_option('playful')
+        self.page.locator('#prepare-preview').click()
+        self.expect(self.page.locator('#consent-panel')).to_be_visible()
+        self.page.locator('#refresh-status').click()
+        self.expect(self.page.locator('#refresh-status')).to_be_enabled()
+        self.expect(self.page.locator('#date-from')).to_have_value('2026-08-01')
+        self.expect(self.page.locator('#max-messages')).to_have_value('30')
+        self.expect(self.page.locator('#latest-draft')).to_have_value('SYNTHETIC_DRAFT')
+        self.expect(self.page.locator('#reply-tone')).to_have_value('playful')
+        self.expect(self.page.locator('#consent-panel')).to_be_visible()
+        self.assertEqual(sum(path.endswith('/preview') for path, _ in self.writes), 1)
+
+    def test_unchanged_refresh_preserves_live_grant_but_changed_model_revokes(self):
+        self.live_start()
+        self.page.locator('#refresh-status').click()
+        self.expect(self.page.locator('#refresh-status')).to_be_enabled()
+        self.expect(self.page.locator('#live-stop')).to_be_visible()
+        self.assertFalse(any(path.endswith('/live/stop') for path, _ in self.writes))
+        self.status_model = 'changed-synthetic-model'
+        self.page.locator('#refresh-status').click()
+        self.expect(self.page.locator('#refresh-status')).to_be_enabled()
+        self.expect(self.page.locator('#live-stop')).to_be_hidden()
+        self.assertEqual(sum(path.endswith('/live/stop') for path, _ in self.writes), 1)
+
+    def test_slow_status_query_does_not_revoke_or_restart_live_grant(self):
+        self.live_start()
+        self.hold_status = True
+        self.page.locator('#refresh-status').click()
+        self.page.wait_for_timeout(2200)
+        self.assertIsNotNone(self.pending_status)
+        self.expect(self.page.locator('#live-stop')).to_be_visible()
+        self.assertTrue(any(path.endswith('/live/tick') for path, _ in self.writes))
+        self.assertFalse(any(path.endswith('/live/stop') for path, _ in self.writes))
+        self.hold_status = False
+        self.reply(*self.pending_status)
+        self.expect(self.page.locator('#refresh-status')).to_be_enabled()
+        self.expect(self.page.locator('#live-stop')).to_be_visible()
+        self.assertEqual(sum(path.endswith('/live/start') for path, _ in self.writes), 1)
+
+    def test_status_refresh_revokes_if_selected_archive_disappears(self):
+        self.live_start()
+        self.status_conversations = []
+        self.page.locator('#refresh-status').click()
+        self.expect(self.page.locator('#refresh-status')).to_be_enabled()
+        self.expect(self.page.locator('#live-stop')).to_be_hidden()
+        self.expect(self.page.locator('#contact-select')).to_have_value('')
+        self.assertEqual(sum(path.endswith('/live/stop') for path, _ in self.writes), 1)
+
+    def test_preview_error_shows_only_fixed_actionable_messages(self):
+        self.open()
+        self.select()
+        self.preview_error = '所选范围内没有可用的聊天文字；回复建议不读取语音或转写'
+        self.page.locator('#prepare-preview').click()
+        self.expect(self.page.locator('#feedback')).to_contain_text('没有可用文字')
+        self.expect(self.page.locator('#feedback')).to_contain_text('调整日期范围')
+        self.preview_error = 'private-path ' + XSS
+        self.page.locator('#prepare-preview').click()
+        self.expect(self.page.locator('#feedback')).to_contain_text('无法准备发送范围')
+        self.assertNotIn('private-path', self.page.locator('#feedback').inner_text())
+        self.assertNotIn(XSS, self.page.locator('#feedback').inner_text())
+        self.assertFalse(any(path.endswith('/run') for path, _ in self.writes))
+
+    def test_live_preview_uses_fixed_specific_error_without_reading_or_cloud(self):
+        self.open(native='auto')
+        self.observe(2)
+        self.expect(self.page.locator('#contact-select')).to_have_value('fixture-0')
+        self.live_preview_error = '所选范围内没有可用的聊天文字；回复建议不读取语音或转写'
+        self.page.locator('#live-prepare').click()
+        self.expect(self.page.locator('#live-status')).to_contain_text('没有可用文字')
+        self.assertFalse(any(path.endswith(('/live/start', '/live/tick', '/run')) for path, _ in self.writes))
 
     def test_reply_style_controls_are_local_and_in_preview(self):
         self.open()

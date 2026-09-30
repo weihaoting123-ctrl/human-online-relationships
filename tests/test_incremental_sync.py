@@ -126,8 +126,74 @@ class IncrementalSyncTests(unittest.TestCase):
         self.assertEqual(second["processed_databases"], 1)
         self.assertEqual(second["imported_conversations"], 1)
         self.assertEqual(len(list((run_root / "sessions").glob("*/messages.json"))), 1)
+        self.assertEqual(second["updated_messages"], 1)
+        self.assertEqual(second["conflicted_messages"], 0)
+        bundle = sync._existing_bundle_path("wxid_example", "unused")
+        payload = json.loads((bundle / "messages.json").read_text(encoding="utf-8"))
+        self.assertEqual(payload["messages"][0]["content"], "edited synthetic")
+        history = list((bundle / ".history").glob("messages-*.json"))
+        self.assertTrue(any(json.loads(path.read_text(encoding="utf-8"))["messages"][0]["content"]
+                            == "synthetic example" for path in history))
+        again, _ = self.run_once()
+        self.assertEqual(again["skipped_conversations"], 1)
         with closing(sqlite3.connect(source)) as connection, connection:
             self.assertEqual(connection.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0], 1)
+
+    def test_conflicting_second_shard_keeps_original_and_does_not_advance_checkpoint(self):
+        source = self.shard(0)
+        self.insert(source, 1)
+        self.run_once()
+        checkpoint = sync._checkpoint_path().read_bytes()
+        other = self.shard(1)
+        self.insert(other, 1, text="conflicting synthetic copy")
+        result, run_root = self.run_once()
+        self.assertEqual(result["failed_conversations"], 1)
+        self.assertEqual(result["conflicted_messages"], 1)
+        self.assertEqual(result["updated_messages"], 0)
+        self.assertEqual(sync._checkpoint_path().read_bytes(), checkpoint)
+        bundle = sync._existing_bundle_path("wxid_example", "unused")
+        payload = json.loads((bundle / "messages.json").read_text(encoding="utf-8"))
+        self.assertEqual(payload["messages"][0]["content"], "synthetic example")
+        self.assertEqual(len(list((run_root / "sessions").glob("*/messages.json"))), 1)
+
+    def test_source_sender_change_is_reported_instead_of_overwriting_old_identity(self):
+        source = self.shard(0)
+        self.insert(source, 1)
+        self.run_once()
+        checkpoint = sync._checkpoint_path().read_bytes()
+        with closing(sqlite3.connect(source)) as connection, connection:
+            connection.execute("INSERT INTO Name2Id VALUES (?)", ("synthetic-account",))
+            table = "Msg_" + hashlib.md5(b"wxid_example").hexdigest()
+            connection.execute(f'UPDATE "{table}" SET real_sender_id=2, message_content=?',
+                               ("changed sender synthetic",))
+        result, _ = self.run_once()
+        self.assertEqual(result["conflicted_messages"], 1)
+        self.assertEqual(result["failed_conversations"], 1)
+        self.assertEqual(sync._checkpoint_path().read_bytes(), checkpoint)
+
+    def test_dropped_unknown_sender_copy_disables_correction_and_checkpoint(self):
+        source = self.shard(0)
+        self.insert(source, 1)
+        self.run_once()
+        checkpoint = sync._checkpoint_path().read_bytes()
+        table = "Msg_" + hashlib.md5(b"wxid_example").hexdigest()
+        with closing(sqlite3.connect(source)) as connection, connection:
+            connection.execute(f'UPDATE "{table}" SET message_content=?', ("changed synthetic text",))
+        original_converter = sync.convert_weflow_cli_payload
+
+        def unknown_sender_copy(*args):
+            payload = original_converter(*args)
+            payload["messages"].append({**payload["messages"][0], "sender": "unknown"})
+            return payload
+
+        with mock.patch.object(sync, "convert_weflow_cli_payload", side_effect=unknown_sender_copy):
+            result, _run_root = self.run_once()
+        self.assertEqual(result["updated_messages"], 0)
+        self.assertEqual(result["failed_conversations"], 1)
+        self.assertEqual(sync._checkpoint_path().read_bytes(), checkpoint)
+        bundle = sync._existing_bundle_path("wxid_example", "unused")
+        payload = json.loads((bundle / "messages.json").read_text(encoding="utf-8"))
+        self.assertEqual(payload["messages"][0]["content"], "synthetic example")
 
     def test_changed_db_without_message_change_skips_raw_merge_and_stats(self):
         source = self.shard(0)

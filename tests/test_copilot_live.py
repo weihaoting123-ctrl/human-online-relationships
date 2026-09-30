@@ -130,6 +130,66 @@ class CopilotLiveTests(CopilotLiveFixture):
         self.assertEqual(self.tick(active)['result']['result_id'], result['result']['result_id'])
         self.assertEqual(self.cloud.call_count, 1)
 
+    def test_successful_turns_keep_granted_context_and_consecutive_own_messages(self):
+        active = self.start_live()
+        self.new_peer(active)
+        self.reader.return_value = tail(live_row(1), live_row(2),
+            live_row(3, 'me', 'OWN_FIRST_PLAN'), live_row(4, 'me', 'OWN_SECOND_DETAIL'),
+            live_row(5, text='YES_TO_PREVIOUS_PLAN'))
+        self.tick(active)
+        self.now[0] += 20
+        self.tick(active)
+        self.assertEqual(self.cloud.call_count, 2)
+        texts = [row['text'] for row in self.cloud.call_args.args[2]['sample']]
+        for text in ('LIVE_SYNTHETIC_2', 'OWN_FIRST_PLAN', 'OWN_SECOND_DETAIL', 'YES_TO_PREVIOUS_PLAN'):
+            self.assertEqual(texts.count(text), 1)
+        self.assertNotIn('LIVE_SYNTHETIC_1', texts)
+        self.assertEqual(self.tick(active)['state'], 'active')
+        self.assertEqual(self.cloud.call_count, 2)
+
+    def test_rolling_context_evicts_oldest_rows_without_widening_grant(self):
+        self.payload['messages'] = [{'timestamp': '2026-09-13T12:00:00', 'type': 'text',
+            'sender': 'me', 'content': f'ARCHIVE_{index}'} for index in range(180)]
+        self.write_payload()
+        active = self.start_live(self.preview_live(max_messages=200))
+        rows = [live_row(1)]
+        for turn in range(5):
+            fresh = [live_row(number, 'me' if number < 8 + turn * 7 else 'peer',
+                f'CURRENT_{number}') for number in range(2 + turn * 7, 9 + turn * 7)]
+            rows.extend(fresh)
+            self.reader.return_value = tail(*rows)
+            self.tick(active)
+            self.now[0] += 20
+            self.tick(active)
+        content = self.cloud.call_args.args[2]['sample']
+        self.assertLessEqual(len(content), 200)
+        self.assertLessEqual(sum(len(row['text']) for row in content), 20000)
+        texts = [row['text'] for row in content]
+        self.assertIn('CURRENT_2', texts)
+        self.assertIn('CURRENT_36', texts)
+        self.assertNotIn('ARCHIVE_0', texts)
+        self.assertNotIn('LIVE_SYNTHETIC_1', texts)
+        self.assertEqual(self.cloud.call_count, 5)
+
+    def test_rolling_context_respects_character_budget_and_deduplicates_repeated_tails(self):
+        active = self.start_live()
+        rows = [live_row(1)]
+        for number in range(2, 8):
+            rows.append(live_row(number, text=f'TURN_{number}_' + 'x' * 3900))
+            self.reader.return_value = tail(*rows)
+            self.tick(active)
+            self.now[0] += 20
+            self.tick(active)
+            sample = self.cloud.call_args.args[2]['sample']
+            self.assertLessEqual(len(sample), 200)
+            self.assertLessEqual(sum(len(row['text']) for row in sample), 20000)
+            self.assertEqual(len({row['text'] for row in sample}), len(sample))
+        texts = [row['text'] for row in self.cloud.call_args.args[2]['sample']]
+        self.assertFalse(any(text.startswith('TURN_2_') for text in texts))
+        self.assertTrue(any(text.startswith('TURN_6_') for text in texts))
+        self.assertTrue(any(text.startswith('TURN_7_') for text in texts))
+        self.assertEqual(self.cloud.call_count, 6)
+
     def test_unchanged_tail_keeps_baseline_without_triggering_cloud(self):
         base = tail(live_row(1))
         base['cursor'].update(version=2, source_digest='c' * 64)
@@ -546,6 +606,18 @@ class CopilotLiveTests(CopilotLiveFixture):
             self.start_live(prepared)
         self.cloud.assert_not_called()
 
+    def test_credential_revision_change_with_same_visible_model_stops_before_claim(self):
+        active = self.start_live()
+        self.reader.return_value = tail(live_row(1), live_row(2))
+        self.tick(active)
+        self.now[0] += 3
+        original = self.cp._configuration(self.root)
+        with mock.patch.object(self.cp, '_configuration', return_value={**original, 'sealed_key': 'synthetic-test-key'}):
+            result = self.tick(active)
+        self.assertEqual(result['state'], 'stopped')
+        self.assertEqual(result['reason'], 'CONFIG_CHANGED')
+        self.cloud.assert_not_called()
+
     def test_rejected_mutation_does_not_revoke_valid_grant(self):
         active = self.start_live()
         with self.assertRaises(Exception):
@@ -618,7 +690,9 @@ class CopilotLiveTests(CopilotLiveFixture):
         self.now[0] += 3
         self.tick(active)
         sent = json.dumps(self.cloud.call_args.args[2])
-        self.assertNotIn('LIVE_SYNTHETIC_2', sent)
+        # Earlier active text remains context; only the post-reply peer text is
+        # a trigger. Retaining context must not revive a cancelled suggestion.
+        self.assertIn('LIVE_SYNTHETIC_2', sent)
         self.assertIn('LIVE_SYNTHETIC_3', sent)
         self.assertIn('SAME', sent)
         self.reader.return_value = tail(live_row(1), live_row(2), live_row(3, 'me'), live_row(4, text='SAME'), live_row(5, text='SAME'))
