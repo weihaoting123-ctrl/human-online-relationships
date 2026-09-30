@@ -68,6 +68,12 @@ summary { cursor: pointer; color: var(--muted); font-size: 12px; padding: 6px 0;
 .context-fields { margin-top: 10px; }
 .date-fields, .option-fields { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; margin: 12px 0; }
 .optional { color: var(--muted); font-weight: 400; }
+.reply-style-card { margin-top: 13px; padding: 15px; background: var(--white); border: 1px solid var(--line); border-radius: 17px; }
+.reply-style-card > label { margin-top: 14px; }
+.reply-style-card select { min-height: 40px; }
+.reply-style-card .option-fields { margin-bottom: 4px; }
+.reply-style-demo { margin: 10px 0; }
+#reply-style-example { margin: 10px 0 6px; padding: 12px; border-left: 2px solid var(--green); background: var(--page); border-radius: 0 10px 10px 0; font-size: 13px; line-height: 1.7; }
 .field-note { margin-top: 6px; }
 .readiness { font-size: 11px; color: var(--muted); margin: 13px 1px 9px; }
 .readiness-actions { flex-wrap: wrap; gap: 4px; }

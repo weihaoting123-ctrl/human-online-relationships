@@ -14,7 +14,7 @@ import time
 
 from dashboard import analysis as ai
 from dashboard.copilot import service as cp
-from dashboard.copilot.read_transport import read_tail as _read_tail, release_reader, validate_tail, LiveReadError, _stamp
+from dashboard.copilot.read_transport import read_tail as _read_tail, resume_tail as _resume_tail, release_reader, validate_tail, LiveReadError, _stamp
 
 
 LIMITS = {'duration_seconds': 900, 'max_calls': 6, 'min_call_interval_seconds': 20,
@@ -25,7 +25,8 @@ NOTICES = (
     '发送所选历史范围的有限文字与启动后此固定会话的新文字；首次读取只建立基线，不发送已有最近消息。',
     '最多持续15分钟、6次新增调用，相隔至少20秒；每批新文字最多20条/4000字，总上下文最多200条/20000字。',
     '仅文字，不含图片、音频、转写或其他会话；尽力脱敏不能保证自由文本完全匿名。',
-    '标题变化或不可用会停止；同名切换可能无法识别。读取有延迟，新发出文字将在下一次读取时清除旧建议。',
+    '确认只是切屏时暂停，回到同一窗口与会话且来源核验通过才恢复；不续期、不追发暂停期间文字。标题改变、无法确定或手动停止仍须重新授权。',
+    '标题不是联系人身份验证，同名切换可能无法识别；始终只读取已授权固定来源。读取有延迟，我方新文字会在下一次读取时清除旧建议。',
     '只提供建议，不发送消息。失败或结果未知即停止，不自动重试；在途请求不能撤回，可能已计费。',
 )
 _LOCK = threading.RLock()
@@ -42,6 +43,10 @@ class _ScopeChanged(ai.AnalysisError):
     def __init__(self, code):
         self.code = code
         super().__init__('固定会话授权已变化，请重新预览并确认')
+
+
+class _Suspended(Exception):
+    """A deliberate focus fence, not a source-read failure or a retry signal."""
 
 
 def mutate(action, *args, **kwargs):
@@ -77,9 +82,10 @@ def _end(session, reason):
 
 
 def _dto(session, *, report_busy=False):
-    state = 'busy' if report_busy and session['busy'] and session['state'] != 'stopped' else session['state']
+    state = 'busy' if (session['state'] == 'resuming' or report_busy and session['busy']
+                      and session['state'] not in ('stopped', 'suspended')) else session['state']
     return {'status': 'ok', 'session_id': session['session_id'], 'state': state,
-            'reason': 'GENERATING' if session.get('generating') and session['state'] != 'stopped' else session['reason'],
+            'reason': 'GENERATING' if session.get('generating') and session['state'] not in ('stopped', 'suspended') else session['reason'],
             'binding_revision': session['binding_revision'],
             'remaining_seconds': max(0, int(session['expires'] - _now())),
             'calls_used': session['attempts'], 'calls_remaining': max(0, 6 - session['attempts']),
@@ -97,6 +103,9 @@ def _session(workspace, identity):
 
 def _guard(data_dir, contacts_dir, session, admission):
     """All filesystem reads occur outside the live lock, including metadata."""
+    with _LOCK:
+        if session['state'] == 'suspended':
+            raise _Suspended()
     try:
         admission(session['scope']['bundle_id'])
     except Exception:
@@ -112,9 +121,15 @@ def _guard(data_dir, contacts_dir, session, admission):
     try:
         index = cp._binding_index(contacts_dir)
         with cp._LOCK:
-            cp._BINDINGS.validate(session['workspace'], session['binding']['binding_token'],
+            current = cp._BINDINGS.validate(session['workspace'], session['binding']['binding_token'],
                 session['scope']['bundle_id'], lambda: index, expected=session['binding'])
+            if (session['state'] == 'resuming'
+                    and current['observation_seq'] <= session['binding']['observation_seq']):
+                raise _ScopeChanged('BINDING_CHANGED')
     except Exception:
+        with _LOCK:
+            if session['state'] == 'suspended':
+                raise _Suspended() from None
         raise _ScopeChanged('BINDING_CHANGED') from None
     return config, index
 
@@ -303,27 +318,119 @@ def _observe(session, value, *, baseline=False):
         _end(session, 'BATCH_OVERFLOW')
 
 
-def tick(data_dir, contacts_dir, request, *, admission):
+def _checked_session(data_dir, contacts_dir, request):
     if (not isinstance(request, dict) or set(request) != {'session_id', 'binding_token', 'binding_revision'}
             or not _id(request['session_id']) or not _id(request['binding_token'])
             or type(request['binding_revision']) is not int or request['binding_revision'] < 0):
         raise ai.AnalysisError('限时建议请求格式无效')
-    workspace = cp._workspace(data_dir, contacts_dir)
     with _LOCK:
-        session = _session(workspace, request['session_id'])
+        session = _session(cp._workspace(data_dir, contacts_dir), request['session_id'])
         if (request['binding_token'] != session['binding']['binding_token']
                 or request['binding_revision'] != session['binding_revision']):
             _end(session, 'BINDING_CHANGED')
-        if session['state'] == 'stopped' or session['busy']:
+        return session
+
+
+def _discard_paused_read(session, value):
+    """Inspect already-started reads for fatal identity/content changes.
+
+    No new read is initiated while away. A completed in-flight snapshot can
+    advance the existing ledger but may never leave text queued for a model.
+    """
+    with _LOCK:
+        if value is not None and session['state'] == 'suspended':
+            _observe(session, value)
+            if session['state'] == 'suspended':
+                session.update(reason='FOCUS_PAUSED', pending=[], pending_peer=False, result=None)
+
+
+def suspend(data_dir, contacts_dir, request, *, admission):
+    session = _checked_session(data_dir, contacts_dir, request)
+    with _GATE:
+        try:
+            with _LOCK:
+                if session['state'] in ('stopped', 'suspended'):
+                    return _dto(session)
+            # Admission and binding validation must succeed before preserving a
+            # grant. Unknown/disconnected title states use stop, never suspend.
+            _, index = _guard(data_dir, contacts_dir, session, admission)
+            with cp._LOCK, _LOCK:
+                _session(session['workspace'], session['session_id'])
+                if session['state'] == 'stopped':
+                    return _dto(session)
+                session['binding'] = cp._BINDINGS.suspend(session['workspace'],
+                    request['binding_token'], session['scope']['bundle_id'], lambda: index,
+                    expected=session['binding'], remaining_seconds=session['expires'] - _now())
+                session.update(state='suspended', reason='FOCUS_PAUSED', result=None,
+                               pending=[], pending_peer=False)
+                session['context_revision'] += 1
+                if not session['busy']:
+                    release_reader(session['scope']['bundle_id'])
+        except Exception as error:
+            with _LOCK:
+                _end(session, _failure_reason(error))
+    with _LOCK:
+        return _dto(session)
+
+
+def resume(data_dir, contacts_dir, request, *, admission):
+    session = _checked_session(data_dir, contacts_dir, request)
+    with _LOCK:
+        if session['state'] != 'suspended':
+            return _dto(session, report_busy=True)
+        if session['busy'] or session['generating']:
+            session['reason'] = 'FOCUS_WAITING_OPERATIONS'
+            return _dto(session)
+        session.update(state='resuming', busy=True, reason='FOCUS_RECHECKING')
+    value = None
+    try:
+        _guard(data_dir, contacts_dir, session, admission)
+        _, signature = cp._source(contacts_dir, session['scope']['bundle_id'])
+        if signature != session['signature']:
+            raise _ScopeChanged('ARCHIVE_CHANGED')
+        value = validate_tail(_resume_tail(session['scope']['bundle_id'], session['cursor']))
+        _guard(data_dir, contacts_dir, session, admission)
+        with _LOCK:
+            _session(session['workspace'], session['session_id'])
+            _discard_paused_read(session, value)
+            if session['state'] == 'resuming':
+                # Preserve the original ledger and cursor; run every identity,
+                # continuity and content guard before discarding away-time text.
+                _observe(session, value)
+                if session['state'] != 'stopped':
+                    session.update(state='exhausted' if session['attempts'] >= 6 else 'active',
+                                   reason='FOCUS_RESUMED', result=None, pending=[], pending_peer=False)
+    except _Suspended:
+        _discard_paused_read(session, value)
+    except Exception as error:
+        with _LOCK:
+            if session['state'] != 'stopped':
+                _end(session, _failure_reason(error))
+    finally:
+        with _LOCK:
+            session['busy'] = False
+            if session['state'] == 'suspended':
+                release_reader(session['scope']['bundle_id'])
+    with _LOCK:
+        return _dto(session)
+
+
+def tick(data_dir, contacts_dir, request, *, admission):
+    workspace = cp._workspace(data_dir, contacts_dir)
+    session = _checked_session(data_dir, contacts_dir, request)
+    with _LOCK:
+        if session['state'] in ('stopped', 'suspended') or session['busy']:
             return _dto(session, report_busy=True)
         session['busy'] = True
+    value = None
     try:
         _guard(data_dir, contacts_dir, session, admission)
         value = validate_tail(_read_tail(session['scope']['bundle_id'], session['cursor']))
         config, index = _guard(data_dir, contacts_dir, session, admission)
         with _LOCK:
             _session(workspace, session['session_id'])
-            if session['state'] == 'stopped':
+            _discard_paused_read(session, value)
+            if session['state'] in ('stopped', 'suspended'):
                 return _dto(session)
             _observe(session, value)
             if (session['state'] != 'active' or session['generating'] or not session['pending_peer']
@@ -338,6 +445,7 @@ def tick(data_dir, contacts_dir, request, *, admission):
                 return _dto(session)
             content = {'date_from': session['scope']['date_from'], 'date_to': session['scope']['date_to'],
                        'direction': session['scope']['direction'], 'sample': session['sample'] + incoming,
+                       'reply_style': session['scope']['reply_style'],
                        'latest_draft': ''}
             context_revision = session['context_revision']
         try:
@@ -365,6 +473,8 @@ def tick(data_dir, contacts_dir, request, *, admission):
             with _LOCK:
                 session['generating'] = False
             raise
+    except _Suspended:
+        _discard_paused_read(session, value)
     except Exception as error:
         with _LOCK:
             if session['state'] != 'stopped':
@@ -372,6 +482,8 @@ def tick(data_dir, contacts_dir, request, *, admission):
     finally:
         with _LOCK:
             session['busy'] = False
+            if session['state'] == 'suspended':
+                release_reader(session['scope']['bundle_id'])
     with _LOCK:
         return _dto(session)
 
@@ -410,7 +522,7 @@ def _generate(data_dir, contacts_dir, session, config, key, content, revision, a
         _guard(data_dir, contacts_dir, session, admission)
         with _LOCK:
             _session(workspace, session['session_id'])
-            if session['state'] == 'stopped':
+            if session['state'] in ('stopped', 'suspended'):
                 return
             # New peer text OR our reply makes an in-flight suggestion obsolete.
             # Retain the pending batch for the next bounded call unless _observe
@@ -424,6 +536,8 @@ def _generate(data_dir, contacts_dir, session, config, key, content, revision, a
             if session['attempts'] >= 6:
                 session['state'], session['reason'] = 'exhausted', 'CALL_LIMIT_REACHED'
                 session['pending'], session['pending_peer'] = [], False
+    except _Suspended:
+        pass
     except Exception as error:
         with _LOCK:
             if session['state'] != 'stopped':

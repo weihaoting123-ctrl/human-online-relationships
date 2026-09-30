@@ -73,6 +73,8 @@ class CopilotBrowserTests(unittest.TestCase):
         self.fail_run = False
         self.hold_live_start = self.hold_live_tick = self.fail_live_tick = False
         self.pending_live_start = self.pending_live_tick = None
+        self.hold_live_resume = False
+        self.pending_live_resume = None
         self.live_tick_result = None
         self.live_tick_reason = None
         self.enabled = True
@@ -190,6 +192,13 @@ class CopilotBrowserTests(unittest.TestCase):
                                'max_batch_messages': 20, 'max_batch_chars': 4000}}
             elif action == 'stop':
                 response.update(state='stopped', reason='LIVE_STOPPED')
+            elif action == 'suspend':
+                response.update(state='suspended', reason='FOCUS_PAUSED')
+            elif action == 'resume':
+                response.update(state='active', reason='LIVE_WAITING', remaining_seconds=840)
+                if self.hold_live_resume:
+                    self.pending_live_resume = (route, response)
+                    return
             elif action == 'start' and self.hold_live_start:
                 self.pending_live_start = (route, response)
                 return
@@ -293,6 +302,159 @@ class CopilotBrowserTests(unittest.TestCase):
         self.expect(self.page.locator('#date-from')).to_have_value('2026-03-02')
         self.expect(self.page.locator('#date-to')).to_have_value('2026-09-20')
         self.assertEqual(self.page.locator('input[type=checkbox]:checked').count(), 0)
+
+    def test_reply_style_controls_are_local_and_in_preview(self):
+        self.open()
+        self.expect(self.page.locator('#reply-tone')).to_have_value('natural')
+        self.expect(self.page.locator('#reply-empathy')).to_have_value('balanced')
+        self.expect(self.page.locator('#reply-length')).to_have_value('short')
+        self.page.locator('#reply-tone').select_option('playful')
+        self.page.locator('#reply-empathy').select_option('attentive')
+        self.page.locator('#reply-length').select_option('normal')
+        self.assertEqual(self.writes, [])
+        self.expect(self.page.locator('#reply-style-example')).not_to_be_empty()
+        self.preview()
+        scope = self.writes[-1][1]
+        self.assertEqual(scope['reply_style'], {'tone': 'playful', 'empathy': 'attentive', 'length': 'normal'})
+        self.expect(self.page.locator('#preview-facts')).to_contain_text('轻松俏皮')
+        self.expect(self.page.locator('#preview-facts')).to_contain_text('多一点体贴')
+        self.assertFalse(any(path.endswith('/run') for path, _ in self.writes))
+
+    def test_reply_style_change_clears_consent_and_late_result(self):
+        self.open()
+        self.preview()
+        self.page.locator('#reply-empathy').select_option('restrained')
+        self.expect(self.page.locator('#consent-panel')).to_be_hidden()
+        self.hold_run = True
+        self.page.locator('#prepare-preview').click()
+        self.page.locator('#confirm-run').click()
+        self.page.wait_for_timeout(60)
+        self.assertIsNotNone(self.pending_run)
+        self.page.locator('#reply-tone').select_option('direct')
+        self.reply(*self.pending_run)
+        self.expect(self.page.locator('.reply-card')).to_have_count(0)
+        self.assertEqual(sum(path.endswith('/run') for path, _ in self.writes), 1)
+
+    def test_reply_style_persists_only_enums_and_handles_untrusted_storage(self):
+        self.open()
+        self.page.locator('#reply-tone').select_option('gentle')
+        stored = self.page.evaluate("JSON.parse(localStorage.getItem('copilot.reply-style.v1'))")
+        self.assertEqual(stored, {'tone': 'gentle', 'empathy': 'balanced', 'length': 'short'})
+        self.page.reload(wait_until='networkidle')
+        self.expect(self.page.locator('#reply-tone')).to_have_value('gentle')
+        self.page.evaluate("localStorage.setItem('copilot.reply-style.v1', JSON.stringify({tone:'<script>',empathy:[],length:'long',draft:'PRIVATE'}))")
+        self.page.reload(wait_until='networkidle')
+        self.expect(self.page.locator('#reply-tone')).to_have_value('natural')
+        self.expect(self.page.locator('body')).not_to_contain_text('PRIVATE')
+        self.assertEqual(self.writes, [])
+
+    def test_reply_style_mismatch_rejects_preview_and_fits_small_window(self):
+        self.open()
+        self.page.set_viewport_size({'width': 320, 'height': 700})
+        self.assertTrue(self.page.evaluate('document.documentElement.scrollWidth <= innerWidth'))
+        self.hold_preview = True
+        self.select()
+        self.page.locator('#prepare-preview').click()
+        self.page.wait_for_timeout(60)
+        route, value = self.pending_preview
+        value['scope']['reply_style'] = {'tone': 'direct', 'empathy': 'balanced', 'length': 'short'}
+        self.reply(route, value)
+        self.expect(self.page.locator('#consent-panel')).to_be_hidden()
+        self.expect(self.page.locator('#feedback')).to_contain_text('无法准备')
+
+    def test_focus_switch_pauses_then_resumes_same_grant_without_new_consent(self):
+        self.live_start()
+        initial_starts = sum(path.endswith('/live/start') for path, _ in self.writes)
+        revision = next(body['binding_revision'] for path, body in self.writes if path.endswith('/live/start'))
+        self.page.evaluate("emitConversation({seq:40,state:'unavailable',title:'',target:null,reason:'TITLE_FOCUS_LOST'})")
+        self.page.wait_for_timeout(100)
+        self.assertTrue(any(path.endswith('/live/suspend') for path, _ in self.writes))
+        self.expect(self.page.locator('#contact-select')).to_have_value('fixture-0')
+        self.expect(self.page.locator('#live-consent')).to_be_hidden()
+        writes = len(self.writes)
+        self.page.wait_for_timeout(2200)
+        self.assertFalse(any(path.endswith('/live/tick') for path, _ in self.writes[writes:]))
+        self.page.evaluate("emitConversation({seq:41,state:'unavailable',title:'',target:'window-one',reason:'TITLE_STABILIZING'})")
+        self.observe(42)
+        self.page.wait_for_timeout(150)
+        resumes = [body for path, body in self.writes if path.endswith('/live/resume')]
+        self.assertEqual(len(resumes), 1)
+        self.assertEqual(resumes[0]['binding_revision'], revision)
+        self.assertEqual(sum(path.endswith('/live/start') for path, _ in self.writes), initial_starts)
+        self.expect(self.page.locator('#live-consent')).to_be_hidden()
+
+    def test_focus_return_different_person_revokes_instead_of_resuming(self):
+        self.live_start()
+        self.page.evaluate("emitConversation({seq:40,state:'unavailable',title:'',target:null,reason:'TITLE_FOCUS_LOST'})")
+        self.page.wait_for_timeout(100)
+        self.observe(41, title='合成云舟')
+        self.page.wait_for_timeout(100)
+        self.assertFalse(any(path.endswith('/live/resume') for path, _ in self.writes))
+        self.assertTrue(any(path.endswith('/live/stop') for path, _ in self.writes))
+
+    def test_focus_uses_distinct_native_window_and_ocr_target_identities(self):
+        self.open(native='auto')
+        self.page.evaluate("emitNative({...fixtureState,target:'native-window-32-hex'})")
+        self.observe(20)
+        self.page.locator('#live-prepare').click()
+        self.page.locator('#live-confirmed').check()
+        self.page.locator('#live-start').click()
+        self.expect(self.page.locator('#live-status')).to_contain_text('等待新消息')
+        self.page.evaluate("emitConversation({seq:40,state:'unavailable',title:'',target:null,reason:'TITLE_FOCUS_LOST'})")
+        self.page.wait_for_timeout(100)
+        self.assertTrue(any(path.endswith('/live/suspend') for path, _ in self.writes))
+        self.observe(41)
+        self.page.wait_for_timeout(150)
+        self.assertEqual(sum(path.endswith('/live/resume') for path, _ in self.writes), 1)
+        self.assertEqual(sum(path.endswith('/live/start') for path, _ in self.writes), 1)
+
+    def test_focus_drains_old_binding_before_suspend_and_fresh_observation(self):
+        self.live_start()
+        self.hold_binding = True
+        self.observe(30)
+        self.page.wait_for_timeout(60)
+        held = self.pending_binding
+        self.assertIsNotNone(held)
+        self.page.evaluate("emitConversation({seq:40,state:'unavailable',title:'',target:null,reason:'TITLE_FOCUS_LOST'})")
+        self.observe(41)
+        self.page.wait_for_timeout(100)
+        self.assertFalse(any(path.endswith('/live/suspend') or path.endswith('/live/resume') for path, _ in self.writes))
+        self.hold_binding = False
+        self.reply(*held)
+        self.page.wait_for_timeout(200)
+        paths = [path for path, _ in self.writes]
+        self.assertEqual(paths.count('/api/copilot/live/suspend'), 1)
+        self.assertEqual(paths.count('/api/copilot/live/resume'), 1)
+        suspend_index = paths.index('/api/copilot/live/suspend')
+        resume_index = paths.index('/api/copilot/live/resume')
+        self.assertIn('/api/copilot/binding', paths[suspend_index + 1:resume_index])
+
+    def test_focus_late_resume_cannot_restart_after_second_focus_loss(self):
+        self.live_start()
+        self.page.evaluate("emitConversation({seq:40,state:'unavailable',title:'',target:null,reason:'TITLE_FOCUS_LOST'})")
+        self.page.wait_for_timeout(70)
+        self.hold_live_resume = True
+        self.observe(41)
+        self.page.wait_for_timeout(100)
+        self.assertIsNotNone(self.pending_live_resume)
+        self.page.evaluate("emitConversation({seq:50,state:'unavailable',title:'',target:null,reason:'TITLE_FOCUS_LOST'})")
+        self.reply(*self.pending_live_resume)
+        self.page.wait_for_timeout(2200)
+        self.expect(self.page.locator('#live-status')).to_contain_text('切屏暂停')
+        self.assertEqual(sum(path.endswith('/live/suspend') for path, _ in self.writes), 2)
+        self.assertFalse(any(path.endswith('/live/tick') for path, _ in self.writes))
+        self.assertEqual(sum(path.endswith('/live/start') for path, _ in self.writes), 1)
+
+    def test_reply_style_change_while_focus_paused_revokes_grant(self):
+        self.live_start()
+        self.page.evaluate("emitConversation({seq:40,state:'unavailable',title:'',target:null,reason:'TITLE_FOCUS_LOST'})")
+        self.page.wait_for_timeout(70)
+        self.page.locator('#reply-tone').select_option('gentle')
+        self.observe(41)
+        self.page.wait_for_timeout(100)
+        self.assertTrue(any(path.endswith('/live/stop') for path, _ in self.writes))
+        self.assertFalse(any(path.endswith('/live/resume') for path, _ in self.writes))
+        self.expect(self.page.locator('#live-stop')).to_be_hidden()
 
     def test_desktop_launch_visible_without_modules_and_keyboard_accessible(self):
         self.enabled = self.analysis_enabled = False

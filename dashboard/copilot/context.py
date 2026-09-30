@@ -6,6 +6,7 @@ from datetime import datetime
 
 from dashboard import analysis as ai
 from dashboard.analysis_metrics import _message_time
+from dashboard.copilot.style import normalize_style
 
 
 MAX_MESSAGES = 200
@@ -15,7 +16,7 @@ MAX_DRAFT_CHARS = 4000
 
 def scope(request):
     allowed = {'bundle_id', 'date_from', 'date_to', 'max_messages', 'direction', 'latest_draft',
-               'binding_revision', 'binding_token'}
+               'binding_revision', 'binding_token', 'reply_style'}
     if not isinstance(request, dict) or set(request) - allowed:
         raise ai.AnalysisError('回复建议请求格式无效')
     if 'binding_token' in request and (not isinstance(request['binding_token'], str)
@@ -52,7 +53,8 @@ def scope(request):
     revision = request.get('binding_revision')
     if type(revision) is not int or revision < 0:
         raise ai.AnalysisError('会话绑定版本无效，请重新选择会话')
-    return {**scope, 'max_messages': limit, 'direction': direction}, draft, revision
+    return {**scope, 'max_messages': limit, 'direction': direction,
+            'reply_style': normalize_style(request.get('reply_style', {}))}, draft, revision
 
 
 def sample(payload, scope, draft):

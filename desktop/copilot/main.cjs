@@ -11,6 +11,7 @@ const {TitleObserver,storedCalibration,REGION_PROFILE}=require('./title-observer
 const {TitleReader}=require('./title-reader.cjs');
 const {TitleCalibration}=require('./title-calibration.cjs');
 const {AutoCalibration}=require('./auto-calibration.cjs');
+const {inactiveTitleReason}=require('./focus-policy.cjs');
 
 const root=path.resolve(__dirname,'../..');
 let options;
@@ -27,6 +28,7 @@ let pendingPresentation=options?.show===true;
 const appPath=path.resolve(process.argv[1]);
 let dragTimer;
 let titleObserver,titleReader,titleCalibration,titleAuto,titleTimer,recognitionEnabled=true;
+let lastSamplingTarget=null;
 const safeSend=state=>{if(win&&!win.isDestroyed()&&pageReady)win.webContents.send('copilot:state',state)};
 const sendConversation=state=>{if(win&&!win.isDestroyed()&&pageReady)win.webContents.send('copilot:conversation',state)};
 function titleTarget(){
@@ -40,9 +42,14 @@ function sampleTitle(fresh=false){
   if(!titleObserver)return Promise.resolve(null);
   if(titleAuto?.active){titleAuto.check();return Promise.resolve(titleObserver.snapshot())}
   if(titleCalibration?.active)return Promise.resolve(titleObserver.snapshot());
-  if(!recognitionEnabled||!titleTarget()){
-    titleReader.stop(controller?.paused?'TITLE_PAUSED':'TITLE_INACTIVE');return Promise.resolve(titleObserver.snapshot());
+  const target=recognitionEnabled?titleTarget():null;
+  if(!target){
+    const reason=inactiveTitleReason({controller,pageReady,recognitionEnabled,
+      expectedTarget:lastSamplingTarget,ownPid:process.pid,now:Date.now()});
+    if(reason!=='TITLE_FOCUS_LOST')lastSamplingTarget=null;
+    titleReader.stop(reason);return Promise.resolve(titleObserver.snapshot());
   }
+  lastSamplingTarget=target.id;
   return fresh?titleReader.refresh():titleReader.sample();
 }
 function setupTitleReader(){
@@ -98,6 +105,7 @@ function startWatcher(){
   child.on('exit',()=>{if(watcher===child){watcher=null;controller.fail('WINDOW_WATCH_STOPPED')}});
 }
 function pause(value){
+  if(value)lastSamplingTarget=null;
   if(value){if(titleAuto?.active)titleAuto.cancel('TITLE_PAUSED');if(titleCalibration?.active)titleCalibration.cancel('TITLE_PAUSED');titleReader?.stop('TITLE_PAUSED')}
   controller.pause(value);
   if(value)stopWatcher();else startWatcher();
@@ -127,7 +135,7 @@ function buildMenu(){
 }
 async function loadPage(){
   if(!win||win.isDestroyed()||pageLoading)return;
-  pageLoading=true;pageReady=false;win.hide();controller.visible=false;
+  pageLoading=true;pageReady=false;lastSamplingTarget=null;win.hide();controller.visible=false;
   try{
     await win.loadURL(options.url);
     if(win.webContents.getURL()!==options.url)throw new Error('UNTRUSTED_PAGE');
@@ -183,6 +191,7 @@ function create(){
     }
     if(command==='recognition'){
       recognitionEnabled=value;
+      if(!value)lastSamplingTarget=null;
       if(!value){if(titleAuto.active)titleAuto.cancel();if(titleCalibration.active)titleCalibration.cancel();titleReader.stop('TITLE_MANUAL')}
       return titleObserver.snapshot();
     }

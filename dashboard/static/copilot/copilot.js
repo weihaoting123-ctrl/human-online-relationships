@@ -15,7 +15,7 @@
     mode: recognitionAvailable ? 'auto' : 'manual', modeEpoch: 0, observationVersion: 0,
     observationSeq: -1, observation: null, observationKey: '', bindingToken: null,
     sessionId: null, serverSeq: 0, bindingQueue: Promise.resolve(), bindingTimer: null,
-    pendingObservation: null, autoBusy: false, autoAttempt: 0,
+    pendingObservation: null, autoBusy: false, autoAttempt: 0, focusAnchor: null,
   };
   const make = (tag, className, text) => {
     const node = document.createElement(tag);
@@ -61,6 +61,7 @@
       bundle_id: $('#contact-select').value,
       date_from: $('#date-from').value, date_to: $('#date-to').value,
       max_messages: Number($('#max-messages').value), direction: $('#direction').value,
+      reply_style: window.CopilotStyle.read(),
       latest_draft: $('#latest-draft').value, binding_revision: state.revision,
       ...(state.mode === 'auto' && state.bindingToken ? { binding_token: state.bindingToken } : {}),
     };
@@ -75,7 +76,8 @@
   }
   function ready() {
     return !state.paused && state.loaded && state.configured && moduleEnabled('copilot') && moduleEnabled('analysis')
-      && (state.mode !== 'auto' || Boolean(state.bindingToken) && observationFresh(state.observation)) && validScope();
+      && (state.mode !== 'auto' || Boolean(state.bindingToken) && state.observation?.state === 'observed'
+        && observationFresh(state.observation)) && validScope();
   }
   function renderControls() {
     $('#prepare-preview').disabled = !ready() || live?.blocked() || state.previewBusy || state.runBusy || state.loading || state.enabling;
@@ -114,6 +116,7 @@
     $('#topics-empty').hidden = false;
   }
   function invalidate({ clearPerson = false, clearDraft = false } = {}) {
+    state.focusAnchor = null;
     live?.invalidate();
     state.revision += 1;
     state.preview = null;
@@ -134,6 +137,7 @@
     TITLE_MARK_BOTTOM_RIGHT: '将鼠标移到标题右下角，按 Ctrl+Alt+F8 完成；请留少量空白。',
     TITLE_STABILIZING: '会话标题正在变化，等待稳定后再建议归档。',
     TITLE_PAUSED: '自动识别已暂停。',
+    TITLE_FOCUS_LOST: '切屏暂停中；回到原微信会话后自动核验，原授权不延长。',
     TITLE_UNAVAILABLE: '当前会话标题暂不可识别，请等待或手动选择归档。',
     TITLE_AUTO_CALIBRATING: '正在本机定位标题条，请保持微信前台且无遮挡…',
     TITLE_CALIBRATION_SAVED: '标题区域已保存，随后会连续检查识别结果。',
@@ -264,6 +268,43 @@
       target: typeof value.target === 'string' ? value.target : '', reason: value.reason, receivedAt: performance.now() }
       : { state: 'unavailable', title: '', target: '', reason: 'TITLE_UNAVAILABLE', receivedAt: performance.now() };
     const key = JSON.stringify([frame.state, frame.target, frame.title]);
+    const previous = state.observation;
+    const anchor = state.focusAnchor;
+    // Watcher and OCR use different opaque identity protocols, never compare
+    // their IDs to each other. Both must remain individually unchanged.
+    const returningToSame = anchor && live?.suspended() && state.nativeTarget === anchor.nativeTarget;
+    const focusLost = frame.state === 'unavailable' && frame.reason === 'TITLE_FOCUS_LOST';
+    const canSuspend = !state.paused && state.bindingToken && (returningToSame
+      || previous?.state === 'observed' && observationFresh(previous) && Boolean(state.nativeTarget));
+    // Only the native host's explicit focus-loss reason may keep a grant.
+    // Unknown capture, hidden/minimized windows and identity changes still revoke.
+    if ((focusLost && canSuspend || returningToSame && frame.state === 'unavailable'
+        && frame.reason === 'TITLE_STABILIZING' && frame.target === anchor.target) && live?.suspend()) {
+      state.focusAnchor = anchor || { target: previous.target, title: previous.title, nativeTarget: state.nativeTarget };
+      state.observation = frame;
+      state.observationVersion += 1;
+      window.clearTimeout(state.bindingTimer); state.bindingTimer = null;
+      state.preview = null;
+      $('#binding-confirmed').checked = false;
+      $('#binding-confirmation').hidden = true;
+      $('#consent-panel').hidden = true;
+      $('#preview-facts').replaceChildren();
+      clearResult();
+      recognitionStatus(titleReasons.TITLE_FOCUS_LOST, frame.reason);
+      renderControls();
+      return;
+    }
+    if (returningToSame && frame.state === 'observed' && frame.target === anchor.target && frame.title === anchor.title) {
+      state.observation = frame;
+      state.observationKey = key;
+      // resume waits for the suspend fence, then requests a brand-new title.
+      // Do not refresh a binding while the suspend request is still in flight.
+      live.resume().then(() => {
+        if (state.focusAnchor === anchor && !live.suspended()) state.focusAnchor = null;
+      });
+      return;
+    }
+    if (anchor) clearAutomatic();
     state.observation = frame;
     if (key !== state.observationKey) {
       state.observationKey = key;
@@ -305,6 +346,10 @@
     const sequence = state.observationSeq, epoch = state.modeEpoch;
     const frame = await bridge.refreshConversation();
     acceptConversation(frame);
+    if (state.focusAnchor && live?.suspended() && state.observation?.state === 'observed'
+        && state.observation.target === state.focusAnchor.target && state.observation.title === state.focusAnchor.title) {
+      queueObservation(state.observation);
+    }
     await state.bindingQueue;
     return epoch === state.modeEpoch && state.mode === 'auto' && state.observationSeq > sequence
       && state.observation?.state === 'observed' && observationFresh(state.observation)
@@ -394,6 +439,7 @@
       && payload.binding_revision === scope.binding_revision && payload.max_calls === 1
       && (!scope.binding_token || (payload.binding_required === true && payload.account_verified === false))
       && payload.scope && ['bundle_id', 'date_from', 'date_to', 'max_messages', 'direction'].every((key) => payload.scope[key] === scope[key])
+      && window.CopilotStyle.matches(payload.scope.reply_style, scope.reply_style)
       && payload.recipient?.configured === true && typeof payload.recipient?.model === 'string'
       && typeof payload.recipient?.provider === 'string' && typeof payload.recipient?.endpoint === 'string'
       && Number.isInteger(payload.counts?.sample_messages) && payload.counts.sample_messages >= 0
@@ -415,6 +461,7 @@
     append('接收方与模型', `${safeText(payload.recipient.provider, 80)} · ${safeText(payload.recipient.model, 120)}`);
     append('接收地址', safeText(payload.recipient.endpoint, 300));
     append('调用计划', '最多 1 次云端调用');
+    append('回复风格', window.CopilotStyle.describe(payload.scope.reply_style));
     $('#binding-confirmed').checked = false;
     $('#binding-confirmation').hidden = payload.binding_required !== true;
     $('#consent-panel').hidden = false;
@@ -595,6 +642,7 @@
     nativeCall('calibrateTitle');
   });
   $('#contact-select').addEventListener('change', () => { invalidate({ clearDraft: true }); renderContext(true); renderControls(); });
+  window.CopilotStyle.init(() => invalidate());
   for (const selector of ['#date-from', '#date-to', '#max-messages', '#direction', '#latest-draft']) {
     $(selector).addEventListener('input', () => invalidate());
     // Native date/select controls may emit only change on some platforms.
@@ -668,7 +716,7 @@
   }
   live = window.CopilotLive?.create({ request, ready, scope: currentScope,
     mode: () => state.mode, busy: () => state.previewBusy || state.runBusy || state.loading || state.enabling,
-    revision: () => state.revision, fresh: freshAutomatic, controls: renderControls,
+    revision: () => state.revision, fresh: freshAutomatic, settled: () => state.bindingQueue, controls: renderControls,
     reset: invalidate, clearResult, renderResult, validResult, name: () => selected()?.name || '',
   });
   refresh();

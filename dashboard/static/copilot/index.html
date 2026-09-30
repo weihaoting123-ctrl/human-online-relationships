@@ -7,6 +7,7 @@
   <title>回复助手 · 人类线上关系可视化</title>
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/copilot/copilot.css">
+  <script src="/copilot/style.js" defer></script>
   <script src="/copilot/live.js" defer></script>
   <script src="/copilot/desktop.js" defer></script>
   <script src="/copilot/copilot.js" defer></script>
@@ -79,6 +80,19 @@
         </details>
       </section>
 
+      <section class="reply-style-card" aria-labelledby="reply-style-heading">
+        <div class="context-heading"><h2 id="reply-style-heading">想怎么说</h2><span class="eyebrow">你的语气</span></div>
+        <p id="reply-style-summary" class="field-note" aria-live="polite"></p>
+        <label for="reply-tone">说话风格</label>
+        <select id="reply-tone"><option value="natural">自然随口</option><option value="playful">轻松俏皮</option><option value="gentle">温柔真诚</option><option value="direct">简洁直接</option></select>
+        <div class="option-fields">
+          <div><label for="reply-empathy">共情程度</label><select id="reply-empathy"><option value="restrained">点到为止</option><option value="balanced" selected>刚刚好</option><option value="attentive">多一点体贴</option></select></div>
+          <div><label for="reply-length">回复长短</label><select id="reply-length"><option value="short">一两句</option><option value="normal">稍展开</option></select></div>
+        </div>
+        <details class="reply-style-demo"><summary>看看措辞区别 · 本机示例</summary><p class="field-note">假设对方说：今天忙了一天，有点累。</p><p id="reply-style-example" aria-live="polite"></p><p class="field-note">固定示例，不是 AI 生成，也不会作为聊天发送。</p></details>
+        <p class="field-note">只记住这三个偏好。修改后重新核对；不会自动生成或重试。</p>
+      </section>
+
       <section class="readiness" aria-label="功能状态">
         <p id="module-status">正在读取本机设置…</p>
         <div class="readiness-actions"><button id="enable-copilot" class="quiet-button" type="button" hidden>启用回复助手</button><button id="refresh-status" class="text-button" type="button">刷新状态</button></div>
@@ -95,7 +109,7 @@
         <section id="live-consent" class="consent-card" aria-label="固定会话限时授权" hidden>
           <h2>只授权这个固定会话</h2><dl id="live-facts"></dl>
           <p>历史范围和授权期间新文字会发给上方服务商，可能产生费用。限时模式不使用“补充最新一句”，不含图片、语音或转写。自动脱敏不保证完全匿名。</p>
-          <p>不会自动换人。标题只能尽力发现切换，同名等情况可能漏检；即使漏检，也只会读取和发送本次获准的固定来源。无法确认窗口时停止，恢复后需重新授权。</p>
+          <p>不会自动换人。标题只能尽力发现切换，同名等情况可能漏检；始终只读取本次获准的固定来源。临时切到其他应用时暂停，回到同一窗口和会话并核验通过后继续原授权；不续期、不追发离开期间的文字。最小化、身份不明、换人、修改设置或手动停止后，仍需重新授权。</p>
           <label class="binding-confirmation"><input id="live-confirmed" type="checkbox"><span>我已核对账号与固定联系人，同意上述历史和未来 15 分钟内的新文字用于最多 6 次云端建议，知道失败可能已计费且不自动重试。</span></label>
           <div class="consent-actions"><button id="live-start" class="primary-button" type="button" disabled>授权这个会话，开启 15 分钟</button><button id="live-cancel" class="text-button" type="button">取消</button></div>
         </section>

@@ -16,7 +16,13 @@
 - 每次交付更新“实际版本 / PR / 测试证据”，不能把候选版本当作完成记录。
 - 按 [项目托管规范](docs/project-stewardship.md)，后续常规范围确认由受托代理逐批判断并记录，不再重复要求维护者选择技术方案；仍保留数据授权、实机验收与发布门槛。
 
-## 当前优先：COPILOT-06 / 及时与无感读取
+## 当前迭代：COPILOT-07 / COPILOT-08 · 回复风格与切屏连续性
+
+`1.0.0-rc.9` 候选，[主 Issue #52](https://github.com/weihaoting123-ctrl/human-online-relationships/issues/52)。COPILOT-07 为表达偏好与减少模板化提示；COPILOT-08 为明确临时失焦的暂停/同来源恢复。设计与范围见[计划](docs/plans/2026-09-30-copilot-style-focus.md)，验证见[审查记录](docs/reviews/v1.0.0-rc.9-review.md)。
+
+不自动扩大授权、延长时间或增加调用次数，不补发离开期间文字。停止、未知失败、身份/设置变化仍需要重新确认。真实模型质量与不同微信版本实机验收保留，不以合成测试代替正式 1.0 验收。
+
+## COPILOT-06 / 及时与无感读取
 
 P2，1.0.0-rc.8 候选。[主 Issue #50](https://github.com/weihaoting123-ctrl/human-online-relationships/issues/50) · [读取链路与验收门槛](docs/plans/2026-09-27-copilot-reading.md) · [审查记录](docs/reviews/v1.0.0-rc.8-review.md)。实现读取器/快照复用、变化分片刷新、本机检测与模型调度解耦；实际设备延迟保留实机验收，完整回归和远端状态记录在关联 PR。
 

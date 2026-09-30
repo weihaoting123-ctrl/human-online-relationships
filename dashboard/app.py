@@ -1205,7 +1205,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 result = copilot_desktop.launch(REPO_ROOT, self.server.server_port)
                 code = HTTPStatus.ACCEPTED if result['desktop']['state'] == 'launch_requested' else HTTPStatus.OK
                 return self._json(result, code)
-            if path in {"/api/copilot/live/preview", "/api/copilot/live/start", "/api/copilot/live/tick", "/api/copilot/live/stop"}:
+            if path in {"/api/copilot/live/preview", "/api/copilot/live/start", "/api/copilot/live/tick",
+                        "/api/copilot/live/suspend", "/api/copilot/live/resume", "/api/copilot/live/stop"}:
                 if self.path != path or not 0 < int(self.headers.get("Content-Length", "0")) <= 8192:
                     raise ValueError("限时建议请求路径或大小无效")
             request = self._read_request()
@@ -1244,6 +1245,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 return self._json(copilot_live.start(DATA_DIR, _library_contacts(), request, admission=_copilot_admission))
             if path == "/api/copilot/live/tick":
                 return self._json(copilot_live.tick(DATA_DIR, _library_contacts(), request, admission=_copilot_admission))
+            if path == "/api/copilot/live/suspend":
+                return self._json(copilot_live.suspend(DATA_DIR, _library_contacts(), request, admission=_copilot_admission))
+            if path == "/api/copilot/live/resume":
+                return self._json(copilot_live.resume(DATA_DIR, _library_contacts(), request, admission=_copilot_admission))
             if path == "/api/copilot/live/stop":
                 return self._json(copilot_live.stop(DATA_DIR, _library_contacts(), request))
             if path == "/api/ai/config":
